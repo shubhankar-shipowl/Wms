@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Typography,
@@ -20,7 +20,7 @@ import {
   InputAdornment,
   Select,
   MenuItem,
-} from "@mui/material";
+} from '@mui/material';
 import {
   Add,
   Search,
@@ -34,25 +34,46 @@ import {
   ChevronRight,
   KeyboardArrowUp,
   KeyboardArrowDown,
-} from "@mui/icons-material";
-import { useQuery, useMutation, useQueryClient } from "react-query";
-import { useNavigate } from "react-router-dom";
-import { useForm } from "react-hook-form";
-import axios from "axios";
-import toast from "react-hot-toast";
-import { useAuth } from "../contexts/AuthContext";
-import LoadingSpinner from "../components/Common/LoadingSpinner";
+} from '@mui/icons-material';
+import { useQuery, useMutation, useQueryClient } from 'react-query';
+import { useNavigate } from 'react-router-dom';
+import { useForm } from 'react-hook-form';
+import axios from 'axios';
+import toast from 'react-hot-toast';
+import { useAuth } from '../contexts/AuthContext';
+import LoadingSpinner from '../components/Common/LoadingSpinner';
 
 // Image Slider Component
 const ImageSlider = ({ images, productName }) => {
   const [currentImageIndex, setCurrentImageIndex] = React.useState(0);
 
-  const getImageUrl = (imagePath) => {
-    if (!imagePath) return null;
-    // Use the API endpoint for serving images
-    const fullUrl = `/api/products/images/${imagePath}`;
-    console.log("ImageSlider: Constructing URL for", imagePath, "->", fullUrl);
-    return fullUrl;
+  const getImageUrl = (image) => {
+    if (!image) return null;
+
+    // Handle both old format (string) and new format (object)
+    if (typeof image === 'string') {
+      // Old format: image is a filename string
+      const fullUrl = `/api/products/images/${image}`;
+      console.log(
+        'ImageSlider: Constructing URL for string',
+        image,
+        '->',
+        fullUrl,
+      );
+      return fullUrl;
+    } else if (image && image.id) {
+      // New format: image is an object with id
+      const fullUrl = `/api/products/images/${image.id}`;
+      console.log(
+        'ImageSlider: Constructing URL for object',
+        image,
+        '->',
+        fullUrl,
+      );
+      return fullUrl;
+    }
+
+    return null;
   };
 
   const nextImage = () => {
@@ -65,10 +86,10 @@ const ImageSlider = ({ images, productName }) => {
 
   // Debug logging
   console.log(
-    "ImageSlider: Received images:",
+    'ImageSlider: Received images:',
     images,
-    "for product:",
-    productName
+    'for product:',
+    productName,
   );
 
   if (!images || images.length === 0) {
@@ -76,15 +97,15 @@ const ImageSlider = ({ images, productName }) => {
       <Box
         sx={{
           height: 150,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          backgroundColor: "#f5f5f5",
-          flexDirection: "column",
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: '#f5f5f5',
+          flexDirection: 'column',
           gap: 1,
         }}
       >
-        <ImageIcon sx={{ fontSize: 36, color: "text.secondary" }} />
+        <ImageIcon sx={{ fontSize: 36, color: 'text.secondary' }} />
         <Typography variant="body2" color="text.secondary">
           No Image
         </Typography>
@@ -98,36 +119,47 @@ const ImageSlider = ({ images, productName }) => {
         height: 200,
         minHeight: 150,
         maxHeight: 250,
-        position: "relative",
-        overflow: "hidden",
-        backgroundColor: "#f5f5f5",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
+        position: 'relative',
+        overflow: 'hidden',
+        backgroundColor: '#f5f5f5',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
       }}
     >
       <img
         src={getImageUrl(images[currentImageIndex])}
         alt={`${productName} - ${currentImageIndex + 1}`}
         style={{
-          width: "100%",
-          height: "100%",
-          objectFit: "contain",
-          objectPosition: "center",
-          transition: "transform 0.3s ease",
-          padding: "8px",
+          width: '100%',
+          height: '100%',
+          objectFit: 'contain',
+          objectPosition: 'center',
+          transition: 'transform 0.3s ease',
+          padding: '8px',
         }}
         onError={(e) => {
-          console.log("Image load error:", e.target.src);
+          console.log('Image load error:', e.target.src);
           // Try to load thumbnail as fallback
-          const thumbnailPath = images[currentImageIndex].replace(
-            "optimized-",
-            "thumb-"
-          );
-          if (e.target.src !== `/uploads/products/${thumbnailPath}`) {
-            e.target.src = `/uploads/products/${thumbnailPath}`;
+          const currentImage = images[currentImageIndex];
+          if (currentImage && currentImage.id) {
+            // New format: use thumbnail query parameter
+            const thumbnailUrl = `/api/products/images/${currentImage.id}?type=thumbnail`;
+            if (e.target.src !== thumbnailUrl) {
+              e.target.src = thumbnailUrl;
+            } else {
+              e.target.style.display = 'none';
+            }
+          } else if (typeof currentImage === 'string') {
+            // Old format: replace optimized- with thumb-
+            const thumbnailPath = currentImage.replace('optimized-', 'thumb-');
+            if (e.target.src !== `/uploads/products/${thumbnailPath}`) {
+              e.target.src = `/uploads/products/${thumbnailPath}`;
+            } else {
+              e.target.style.display = 'none';
+            }
           } else {
-            e.target.style.display = "none";
+            e.target.style.display = 'none';
           }
         }}
       />
@@ -138,16 +170,16 @@ const ImageSlider = ({ images, productName }) => {
           <IconButton
             onClick={prevImage}
             sx={{
-              position: "absolute",
+              position: 'absolute',
               left: 4,
-              top: "50%",
-              transform: "translateY(-50%)",
-              backgroundColor: "rgba(0,0,0,0.6)",
-              color: "white",
+              top: '50%',
+              transform: 'translateY(-50%)',
+              backgroundColor: 'rgba(0,0,0,0.6)',
+              color: 'white',
               width: 28,
               height: 28,
-              "&:hover": {
-                backgroundColor: "rgba(0,0,0,0.8)",
+              '&:hover': {
+                backgroundColor: 'rgba(0,0,0,0.8)',
               },
               zIndex: 2,
             }}
@@ -158,16 +190,16 @@ const ImageSlider = ({ images, productName }) => {
           <IconButton
             onClick={nextImage}
             sx={{
-              position: "absolute",
+              position: 'absolute',
               right: 4,
-              top: "50%",
-              transform: "translateY(-50%)",
-              backgroundColor: "rgba(0,0,0,0.6)",
-              color: "white",
+              top: '50%',
+              transform: 'translateY(-50%)',
+              backgroundColor: 'rgba(0,0,0,0.6)',
+              color: 'white',
               width: 28,
               height: 28,
-              "&:hover": {
-                backgroundColor: "rgba(0,0,0,0.8)",
+              '&:hover': {
+                backgroundColor: 'rgba(0,0,0,0.8)',
               },
               zIndex: 2,
             }}
@@ -182,11 +214,11 @@ const ImageSlider = ({ images, productName }) => {
       {images.length > 1 && (
         <Box
           sx={{
-            position: "absolute",
+            position: 'absolute',
             bottom: 8,
-            left: "50%",
-            transform: "translateX(-50%)",
-            display: "flex",
+            left: '50%',
+            transform: 'translateX(-50%)',
+            display: 'flex',
             gap: 0.5,
             zIndex: 2,
           }}
@@ -197,13 +229,13 @@ const ImageSlider = ({ images, productName }) => {
               sx={{
                 width: 8,
                 height: 8,
-                borderRadius: "50%",
+                borderRadius: '50%',
                 backgroundColor:
                   index === currentImageIndex
-                    ? "white"
-                    : "rgba(255,255,255,0.5)",
-                cursor: "pointer",
-                transition: "background-color 0.3s ease",
+                    ? 'white'
+                    : 'rgba(255,255,255,0.5)',
+                cursor: 'pointer',
+                transition: 'background-color 0.3s ease',
               }}
               onClick={() => setCurrentImageIndex(index)}
             />
@@ -226,23 +258,23 @@ const ProductCard = ({
   return (
     <Card
       sx={{
-        height: "100%",
-        display: "flex",
-        flexDirection: "column",
-        transition: "all 0.3s ease-in-out",
-        "&:hover": {
-          transform: "translateY(-4px)",
-          boxShadow: "0 8px 25px rgba(0,0,0,0.15)",
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        transition: 'all 0.3s ease-in-out',
+        '&:hover': {
+          transform: 'translateY(-4px)',
+          boxShadow: '0 8px 25px rgba(0,0,0,0.15)',
         },
         borderRadius: 2,
-        overflow: "hidden",
-        width: "100%",
+        overflow: 'hidden',
+        width: '100%',
         minHeight: 370,
         maxHeight: 400,
       }}
     >
       {/* Product Image Slider */}
-      <Box sx={{ position: "relative" }}>
+      <Box sx={{ position: 'relative' }}>
         <ImageSlider images={product.images} productName={product.name} />
 
         {/* Low Stock Badge */}
@@ -253,10 +285,10 @@ const ProductCard = ({
             color="error"
             size="small"
             sx={{
-              position: "absolute",
+              position: 'absolute',
               top: 8,
               right: 8,
-              fontWeight: "bold",
+              fontWeight: 'bold',
               zIndex: 3,
             }}
           />
@@ -267,9 +299,9 @@ const ProductCard = ({
         sx={{
           flexGrow: 1,
           p: 1.5,
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "space-between",
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'space-between',
           minHeight: 120,
         }}
       >
@@ -281,11 +313,11 @@ const ProductCard = ({
             sx={{
               fontWeight: 600,
               mb: 0.5,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              color: "text.primary",
-              fontSize: "1rem",
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              color: 'text.primary',
+              fontSize: '1rem',
             }}
           >
             {product.name}
@@ -295,7 +327,7 @@ const ProductCard = ({
           <Typography
             variant="body2"
             color="text.secondary"
-            sx={{ mb: 0.5, fontFamily: "monospace", fontSize: "0.75rem" }}
+            sx={{ mb: 0.5, fontFamily: 'monospace', fontSize: '0.75rem' }}
           >
             SKU: {product.sku}
           </Typography>
@@ -305,12 +337,12 @@ const ProductCard = ({
             variant="h6"
             color="primary"
             sx={{
-              fontWeight: "bold",
+              fontWeight: 'bold',
               mb: 1,
-              display: "flex",
-              alignItems: "center",
+              display: 'flex',
+              alignItems: 'center',
               gap: 0.5,
-              fontSize: "1.1rem",
+              fontSize: '1.1rem',
             }}
           >
             <ShoppingCart fontSize="small" />₹{product.price}
@@ -319,11 +351,11 @@ const ProductCard = ({
           {/* Stock and Barcode Info */}
           <Box
             sx={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
               mb: 0.5,
-              flexWrap: "wrap",
+              flexWrap: 'wrap',
               gap: 0.5,
             }}
           >
@@ -331,8 +363,8 @@ const ProductCard = ({
               variant="body2"
               sx={{
                 fontWeight: 500,
-                color: product.total_stock > 0 ? "success.main" : "error.main",
-                fontSize: "0.75rem",
+                color: product.total_stock > 0 ? 'success.main' : 'error.main',
+                fontSize: '0.75rem',
               }}
             >
               Stock: {product.total_stock || 0}
@@ -340,7 +372,7 @@ const ProductCard = ({
             <Typography
               variant="body2"
               color="text.secondary"
-              sx={{ fontSize: "0.75rem" }}
+              sx={{ fontSize: '0.75rem' }}
             >
               Barcodes: {product.barcode_count || 0}
             </Typography>
@@ -350,13 +382,13 @@ const ProductCard = ({
           {product.product_type && (
             <Chip
               label={
-                product.product_type === "domestic"
-                  ? "Domestic"
-                  : "International"
+                product.product_type === 'domestic'
+                  ? 'Domestic'
+                  : 'International'
               }
               size="small"
               variant="outlined"
-              sx={{ mb: 1, fontSize: "0.7rem", height: "20px" }}
+              sx={{ mb: 1, fontSize: '0.7rem', height: '20px' }}
             />
           )}
         </Box>
@@ -367,8 +399,8 @@ const ProductCard = ({
         sx={{
           p: 1.5,
           pt: 0,
-          justifyContent: "space-between",
-          backgroundColor: "#fafafa",
+          justifyContent: 'space-between',
+          backgroundColor: '#fafafa',
           minHeight: 48,
         }}
       >
@@ -377,8 +409,8 @@ const ProductCard = ({
           onClick={() => onView(product.id)}
           title="View Details"
           sx={{
-            color: "primary.main",
-            "&:hover": { backgroundColor: "primary.light", color: "white" },
+            color: 'primary.main',
+            '&:hover': { backgroundColor: 'primary.light', color: 'white' },
           }}
         >
           <Visibility />
@@ -390,8 +422,8 @@ const ProductCard = ({
             onClick={() => onEdit(product)}
             title="Edit Product"
             sx={{
-              color: "warning.main",
-              "&:hover": { backgroundColor: "warning.light", color: "white" },
+              color: 'warning.main',
+              '&:hover': { backgroundColor: 'warning.light', color: 'white' },
             }}
           >
             <Edit />
@@ -404,8 +436,8 @@ const ProductCard = ({
             onClick={() => onDelete(product)}
             title="Delete Product"
             sx={{
-              color: "error.main",
-              "&:hover": { backgroundColor: "error.light", color: "white" },
+              color: 'error.main',
+              '&:hover': { backgroundColor: 'error.light', color: 'white' },
             }}
           >
             <Delete />
@@ -427,15 +459,15 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
     formState: { errors },
   } = useForm({
     defaultValues: product || {
-      name: "",
-      sku: "",
-      price: "",
-      category: "",
-      unit: "pcs",
-      status: "active",
-      product_type: "domestic",
-      hsn_code: "",
-      gst_rate: "",
+      name: '',
+      sku: '',
+      price: '',
+      category: '',
+      unit: 'pcs',
+      status: 'active',
+      product_type: 'domestic',
+      hsn_code: '',
+      gst_rate: '',
     },
   });
 
@@ -443,21 +475,31 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
   useEffect(() => {
     if (product) {
       reset({
-        name: product.name || "",
-        sku: product.sku || "",
-        price: product.price || "",
-        category: product.category || "",
-        unit: product.unit || "pcs",
-        status: product.status || "active",
-        product_type: product.product_type || "domestic",
-        hsn_code: product.hsn_code || "",
-        gst_rate: product.gst_rate || "",
+        name: product.name || '',
+        sku: product.sku || '',
+        price: product.price || '',
+        category: product.category || '',
+        unit: product.unit || 'pcs',
+        status: product.status || 'active',
+        product_type: product.product_type || 'domestic',
+        hsn_code: product.hsn_code || '',
+        gst_rate: product.gst_rate || '',
       });
 
       // Handle existing images
       if (product.images && Array.isArray(product.images)) {
         setImagePreview(
-          product.images.map((img) => `/api/products/images/${img}`)
+          product.images
+            .map((img) => {
+              // Handle both old format (string) and new format (object)
+              if (typeof img === 'string') {
+                return `/api/products/images/${img}`;
+              } else if (img && img.id) {
+                return `/api/products/images/${img.id}`;
+              }
+              return null;
+            })
+            .filter(Boolean),
         );
       } else {
         setImagePreview([]);
@@ -466,15 +508,15 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
     } else {
       // Reset to default values for new product
       reset({
-        name: "",
-        sku: "",
-        price: "",
-        category: "",
-        unit: "pcs",
-        status: "active",
-        product_type: "domestic",
-        hsn_code: "",
-        gst_rate: "",
+        name: '',
+        sku: '',
+        price: '',
+        category: '',
+        unit: 'pcs',
+        status: 'active',
+        product_type: 'domestic',
+        hsn_code: '',
+        gst_rate: '',
       });
       setImagePreview([]);
       setSelectedImages([]);
@@ -484,7 +526,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
   const handleImageChange = (event) => {
     const files = Array.from(event.target.files);
     if (files.length > 4) {
-      toast.error("Maximum 4 images allowed");
+      toast.error('Maximum 4 images allowed');
       return;
     }
 
@@ -506,7 +548,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
   const reorderImages = (fromIndex, toIndex) => {
     // Safety checks
     if (!selectedImages || !imagePreview || selectedImages.length === 0) {
-      console.warn("Cannot reorder: no images selected");
+      console.warn('Cannot reorder: no images selected');
       return;
     }
 
@@ -516,7 +558,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
       toIndex < 0 ||
       toIndex >= selectedImages.length
     ) {
-      console.warn("Invalid indices for reordering");
+      console.warn('Invalid indices for reordering');
       return;
     }
 
@@ -529,7 +571,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
 
     // Safety check for moved items
     if (!movedImage || !movedPreview) {
-      console.warn("Cannot reorder: invalid image or preview");
+      console.warn('Cannot reorder: invalid image or preview');
       return;
     }
 
@@ -537,12 +579,12 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
     newImages.splice(toIndex, 0, movedImage);
     newPreviews.splice(toIndex, 0, movedPreview);
 
-    console.log("Reordering images:", {
+    console.log('Reordering images:', {
       fromIndex,
       toIndex,
       newOrder: newImages.map((img, idx) => ({
         index: idx,
-        name: img?.name || "Unknown",
+        name: img?.name || 'Unknown',
       })),
     });
 
@@ -571,24 +613,24 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
       if (product) {
         return axios.put(`/api/products/${product.id}`, data);
       } else {
-        return axios.post("/api/products", data);
+        return axios.post('/api/products', data);
       }
     },
     {
       onSuccess: () => {
         toast.success(
           product
-            ? "Product updated successfully"
-            : "Product created successfully"
+            ? 'Product updated successfully'
+            : 'Product created successfully',
         );
         onSuccess();
         onClose();
         reset();
       },
       onError: (error) => {
-        toast.error(error.response?.data?.message || "Operation failed");
+        toast.error(error.response?.data?.message || 'Operation failed');
       },
-    }
+    },
   );
 
   const onSubmit = (data) => {
@@ -596,24 +638,49 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
 
     // Append form fields
     Object.keys(data).forEach((key) => {
-      if (data[key] !== undefined && data[key] !== "") {
+      if (data[key] !== undefined && data[key] !== '') {
         formData.append(key, data[key]);
       }
     });
 
-    // Append images in the correct order
-    selectedImages.forEach((image, index) => {
-      formData.append("images", image);
-    });
+    // Handle images for updates
+    if (product && selectedImages.length === 0) {
+      // If updating and no new images selected, send existing image IDs
+      if (product.images && Array.isArray(product.images)) {
+        const existingImageIds = product.images
+          .map((img) => {
+            if (typeof img === 'string') {
+              // Old format: this shouldn't happen with new backend, but handle gracefully
+              return null;
+            } else if (img && img.id) {
+              // New format: send the image ID
+              return img.id;
+            }
+            return null;
+          })
+          .filter(Boolean);
+
+        // Send existing image IDs as JSON string
+        if (existingImageIds.length > 0) {
+          formData.append('images', JSON.stringify(existingImageIds));
+        }
+      }
+    } else if (selectedImages.length > 0) {
+      // If new images are selected, send them
+      selectedImages.forEach((image, index) => {
+        formData.append('images', image);
+      });
+    }
 
     // Debug logging
-    console.log("Submitting form with images:", selectedImages.length);
+    console.log('Submitting form with images:', selectedImages.length);
+    console.log('Product images:', product?.images);
     console.log(
-      "Selected images:",
+      'Selected images:',
       selectedImages.map((img, idx) => ({
         index: idx,
-        name: img?.name || "Unknown",
-      }))
+        name: img?.name || 'Unknown',
+      })),
     );
 
     mutation.mutate(formData);
@@ -623,7 +690,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
       <form onSubmit={handleSubmit(onSubmit)}>
         <DialogTitle>
-          {product ? "Edit Product" : "Add New Product"}
+          {product ? 'Edit Product' : 'Add New Product'}
         </DialogTitle>
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 1 }}>
@@ -631,7 +698,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
               <TextField
                 fullWidth
                 label="Product Name"
-                {...register("name", { required: "Product name is required" })}
+                {...register('name', { required: 'Product name is required' })}
                 error={!!errors.name}
                 helperText={errors.name?.message}
               />
@@ -641,7 +708,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
               <TextField
                 fullWidth
                 label="SKU"
-                {...register("sku", { required: "SKU is required" })}
+                {...register('sku', { required: 'SKU is required' })}
                 error={!!errors.sku}
                 helperText={errors.sku?.message}
               />
@@ -657,9 +724,9 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
                   label="Price"
                   type="number"
                   step="0.01"
-                  {...register("price", {
-                    required: "Price is required",
-                    min: { value: 0, message: "Price must be positive" },
+                  {...register('price', {
+                    required: 'Price is required',
+                    min: { value: 0, message: 'Price must be positive' },
                   })}
                   error={!!errors.price}
                 />
@@ -675,7 +742,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
               <TextField
                 fullWidth
                 label="Category"
-                {...register("category")}
+                {...register('category')}
                 error={!!errors.category}
                 helperText={errors.category?.message}
               />
@@ -685,7 +752,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
               <TextField
                 fullWidth
                 label="Unit"
-                {...register("unit")}
+                {...register('unit')}
                 error={!!errors.unit}
                 helperText={errors.unit?.message}
               />
@@ -696,7 +763,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
                 <InputLabel>Status</InputLabel>
                 <Select
                   label="Status"
-                  {...register("status")}
+                  {...register('status')}
                   error={!!errors.status}
                   defaultValue="active"
                 >
@@ -717,7 +784,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
                 <InputLabel>Product Type</InputLabel>
                 <Select
                   label="Product Type"
-                  {...register("product_type")}
+                  {...register('product_type')}
                   defaultValue="domestic"
                 >
                   <MenuItem value="domestic">Domestic</MenuItem>
@@ -730,15 +797,15 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
               <TextField
                 fullWidth
                 label="HSN Code"
-                {...register("hsn_code", {
-                  required: "HSN code is required",
+                {...register('hsn_code', {
+                  required: 'HSN code is required',
                   minLength: {
                     value: 4,
-                    message: "HSN code must be at least 4 characters",
+                    message: 'HSN code must be at least 4 characters',
                   },
                   maxLength: {
                     value: 20,
-                    message: "HSN code must not exceed 20 characters",
+                    message: 'HSN code must not exceed 20 characters',
                   },
                 })}
                 error={!!errors.hsn_code}
@@ -756,12 +823,12 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
                   step="0.01"
                   min="0"
                   max="100"
-                  {...register("gst_rate", {
-                    required: "GST rate is required",
-                    min: { value: 0, message: "GST rate must be at least 0%" },
+                  {...register('gst_rate', {
+                    required: 'GST rate is required',
+                    min: { value: 0, message: 'GST rate must be at least 0%' },
                     max: {
                       value: 100,
-                      message: "GST rate must not exceed 100%",
+                      message: 'GST rate must not exceed 100%',
                     },
                   })}
                   error={!!errors.gst_rate}
@@ -784,7 +851,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
                 multiple
                 accept="image/*"
                 onChange={handleImageChange}
-                style={{ marginBottom: "16px" }}
+                style={{ marginBottom: '16px' }}
               />
             </Grid>
 
@@ -798,32 +865,32 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
                     <Grid item xs={12} sm={6} md={3} key={index}>
                       <Box
                         sx={{
-                          position: "relative",
-                          border: "2px solid #e0e0e0",
-                          borderRadius: "8px",
-                          padding: "8px",
-                          backgroundColor: "#f9f9f9",
-                          "&:hover": {
-                            borderColor: "primary.main",
+                          position: 'relative',
+                          border: '2px solid #e0e0e0',
+                          borderRadius: '8px',
+                          padding: '8px',
+                          backgroundColor: '#f9f9f9',
+                          '&:hover': {
+                            borderColor: 'primary.main',
                           },
                         }}
                       >
                         {/* Position indicator */}
                         <Box
                           sx={{
-                            position: "absolute",
+                            position: 'absolute',
                             top: 4,
                             left: 4,
-                            backgroundColor: "primary.main",
-                            color: "white",
-                            borderRadius: "50%",
+                            backgroundColor: 'primary.main',
+                            color: 'white',
+                            borderRadius: '50%',
                             width: 24,
                             height: 24,
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            fontSize: "12px",
-                            fontWeight: "bold",
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: '12px',
+                            fontWeight: 'bold',
                             zIndex: 2,
                           }}
                         >
@@ -834,21 +901,21 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
                           src={preview}
                           alt={`Preview ${index + 1}`}
                           style={{
-                            width: "100%",
-                            height: "120px",
-                            objectFit: "contain",
-                            borderRadius: "4px",
+                            width: '100%',
+                            height: '120px',
+                            objectFit: 'contain',
+                            borderRadius: '4px',
                           }}
                         />
 
                         {/* Control buttons */}
                         <Box
                           sx={{
-                            position: "absolute",
+                            position: 'absolute',
                             top: 4,
                             right: 4,
-                            display: "flex",
-                            flexDirection: "column",
+                            display: 'flex',
+                            flexDirection: 'column',
                             gap: 0.5,
                           }}
                         >
@@ -858,13 +925,13 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
                               size="small"
                               onClick={() => moveImageUp(index)}
                               sx={{
-                                backgroundColor: "rgba(255,255,255,0.9)",
-                                color: "primary.main",
+                                backgroundColor: 'rgba(255,255,255,0.9)',
+                                color: 'primary.main',
                                 width: 24,
                                 height: 24,
-                                "&:hover": {
-                                  backgroundColor: "primary.main",
-                                  color: "white",
+                                '&:hover': {
+                                  backgroundColor: 'primary.main',
+                                  color: 'white',
                                 },
                               }}
                             >
@@ -878,13 +945,13 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
                               size="small"
                               onClick={() => moveImageDown(index)}
                               sx={{
-                                backgroundColor: "rgba(255,255,255,0.9)",
-                                color: "primary.main",
+                                backgroundColor: 'rgba(255,255,255,0.9)',
+                                color: 'primary.main',
                                 width: 24,
                                 height: 24,
-                                "&:hover": {
-                                  backgroundColor: "primary.main",
-                                  color: "white",
+                                '&:hover': {
+                                  backgroundColor: 'primary.main',
+                                  color: 'white',
                                 },
                               }}
                             >
@@ -897,13 +964,13 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
                             size="small"
                             onClick={() => removeImage(index)}
                             sx={{
-                              backgroundColor: "rgba(255,255,255,0.9)",
-                              color: "error.main",
+                              backgroundColor: 'rgba(255,255,255,0.9)',
+                              color: 'error.main',
                               width: 24,
                               height: 24,
-                              "&:hover": {
-                                backgroundColor: "error.main",
-                                color: "white",
+                              '&:hover': {
+                                backgroundColor: 'error.main',
+                                color: 'white',
                               },
                             }}
                           >
@@ -925,7 +992,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
             variant="contained"
             disabled={mutation.isLoading}
           >
-            {mutation.isLoading ? "Saving..." : product ? "Update" : "Create"}
+            {mutation.isLoading ? 'Saving...' : product ? 'Update' : 'Create'}
           </Button>
         </DialogActions>
       </form>
@@ -934,9 +1001,9 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
 };
 
 const Products = () => {
-  const [search, setSearch] = useState("");
-  const [stockFilter, setStockFilter] = useState("high_to_low");
-  const [skuFilter, setSkuFilter] = useState("asc");
+  const [search, setSearch] = useState('');
+  const [stockFilter, setStockFilter] = useState('high_to_low');
+  const [skuFilter, setSkuFilter] = useState('asc');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const navigate = useNavigate();
@@ -944,42 +1011,42 @@ const Products = () => {
   const { canEdit, isAdmin } = useAuth();
 
   const { data: productsData, isLoading } = useQuery(
-    ["products", search, stockFilter, skuFilter],
+    ['products', search, stockFilter, skuFilter],
     () => {
-      const sortOrder = stockFilter === "high_to_low" ? "DESC" : "ASC";
-      const skuSortOrder = skuFilter === "asc" ? "ASC" : "DESC";
+      const sortOrder = stockFilter === 'high_to_low' ? 'DESC' : 'ASC';
+      const skuSortOrder = skuFilter === 'asc' ? 'ASC' : 'DESC';
 
       return axios
-        .get("/api/products", {
+        .get('/api/products', {
           params: {
             search,
             limit: 50,
-            sortBy: skuFilter === "none" ? "total_stock" : "sku",
-            sortOrder: skuFilter === "none" ? sortOrder : skuSortOrder,
+            sortBy: skuFilter === 'none' ? 'total_stock' : 'sku',
+            sortOrder: skuFilter === 'none' ? sortOrder : skuSortOrder,
           },
         })
         .then((res) => res.data);
     },
     {
       keepPreviousData: true,
-    }
+    },
   );
 
   const deleteMutation = useMutation(
     (id) => axios.delete(`/api/products/${id}`),
     {
       onSuccess: (response) => {
-        const message = response.data.message || "Product deleted successfully";
+        const message = response.data.message || 'Product deleted successfully';
         toast.success(message);
         // Invalidate all product-related queries to refresh dropdowns everywhere
-        queryClient.invalidateQueries("products");
-        queryClient.invalidateQueries("products-filter");
-        queryClient.invalidateQueries("barcodes");
+        queryClient.invalidateQueries('products');
+        queryClient.invalidateQueries('products-filter');
+        queryClient.invalidateQueries('barcodes');
       },
       onError: (error) => {
-        toast.error(error.response?.data?.message || "Delete failed");
+        toast.error(error.response?.data?.message || 'Delete failed');
       },
-    }
+    },
   );
 
   const handleEdit = (product) => {
@@ -1006,9 +1073,9 @@ const Products = () => {
 
   const handleDialogSuccess = () => {
     // Invalidate all product-related queries to refresh dropdowns everywhere
-    queryClient.invalidateQueries("products");
-    queryClient.invalidateQueries("products-filter");
-    queryClient.invalidateQueries("barcodes");
+    queryClient.invalidateQueries('products');
+    queryClient.invalidateQueries('products-filter');
+    queryClient.invalidateQueries('barcodes');
   };
 
   if (isLoading) {
@@ -1021,11 +1088,11 @@ const Products = () => {
     <Box>
       <Box
         sx={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
           mb: 4,
-          flexWrap: "wrap",
+          flexWrap: 'wrap',
           gap: 2,
         }}
       >
@@ -1035,10 +1102,10 @@ const Products = () => {
             component="h1"
             sx={{
               fontWeight: 700,
-              background: "linear-gradient(45deg, #1976d2 30%, #42a5f5 90%)",
-              backgroundClip: "text",
-              WebkitBackgroundClip: "text",
-              WebkitTextFillColor: "transparent",
+              background: 'linear-gradient(45deg, #1976d2 30%, #42a5f5 90%)',
+              backgroundClip: 'text',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
               mb: 0.5,
             }}
           >
@@ -1058,11 +1125,11 @@ const Products = () => {
               px: 3,
               py: 1,
               fontWeight: 600,
-              textTransform: "none",
-              boxShadow: "0 4px 12px rgba(25, 118, 210, 0.3)",
-              "&:hover": {
-                boxShadow: "0 6px 16px rgba(25, 118, 210, 0.4)",
-                transform: "translateY(-1px)",
+              textTransform: 'none',
+              boxShadow: '0 4px 12px rgba(25, 118, 210, 0.3)',
+              '&:hover': {
+                boxShadow: '0 6px 16px rgba(25, 118, 210, 0.4)',
+                transform: 'translateY(-1px)',
               },
             }}
           >
@@ -1088,16 +1155,16 @@ const Products = () => {
                 ),
               }}
               sx={{
-                "& .MuiOutlinedInput-root": {
+                '& .MuiOutlinedInput-root': {
                   borderRadius: 2,
-                  backgroundColor: "background.paper",
-                  "&:hover": {
-                    "& .MuiOutlinedInput-notchedOutline": {
-                      borderColor: "primary.main",
+                  backgroundColor: 'background.paper',
+                  '&:hover': {
+                    '& .MuiOutlinedInput-notchedOutline': {
+                      borderColor: 'primary.main',
                     },
                   },
-                  "&.Mui-focused": {
-                    "& .MuiOutlinedInput-notchedOutline": {
+                  '&.Mui-focused': {
+                    '& .MuiOutlinedInput-notchedOutline': {
                       borderWidth: 2,
                     },
                   },
@@ -1113,9 +1180,9 @@ const Products = () => {
                 onChange={(e) => setStockFilter(e.target.value)}
                 label="Sort by Stock"
                 sx={{
-                  "& .MuiOutlinedInput-root": {
+                  '& .MuiOutlinedInput-root': {
                     borderRadius: 2,
-                    backgroundColor: "background.paper",
+                    backgroundColor: 'background.paper',
                   },
                 }}
               >
@@ -1132,9 +1199,9 @@ const Products = () => {
                 onChange={(e) => setSkuFilter(e.target.value)}
                 label="Sort by SKU"
                 sx={{
-                  "& .MuiOutlinedInput-root": {
+                  '& .MuiOutlinedInput-root': {
                     borderRadius: 2,
-                    backgroundColor: "background.paper",
+                    backgroundColor: 'background.paper',
                   },
                 }}
               >
@@ -1152,8 +1219,8 @@ const Products = () => {
         container
         spacing={3}
         sx={{
-          "& .MuiGrid-item": {
-            display: "flex",
+          '& .MuiGrid-item': {
+            display: 'flex',
           },
         }}
       >
@@ -1172,11 +1239,11 @@ const Products = () => {
       </Grid>
 
       {products.length === 0 && (
-        <Box sx={{ textAlign: "center", py: 8 }}>
+        <Box sx={{ textAlign: 'center', py: 8 }}>
           <Typography variant="h6" color="text.secondary">
             {search
-              ? "No products found matching your search"
-              : "No products available"}
+              ? 'No products found matching your search'
+              : 'No products available'}
           </Typography>
           {canEdit && !search && (
             <Button

@@ -183,21 +183,24 @@ export const SocketProvider = ({ children }) => {
 
       // Real-time event handlers
       newSocket.on('product_created', (product) => {
-        toast.success(`New product created: ${product.name}`);
+        // Don't show toast here to avoid duplicate messages
+        // The mutation success handler already shows the message
         window.dispatchEvent(
           new CustomEvent('productCreated', { detail: product }),
         );
       });
 
       newSocket.on('product_updated', (product) => {
-        toast.success(`Product updated: ${product.name}`);
+        // Don't show toast here to avoid duplicate messages
+        // The mutation success handler already shows the message
         window.dispatchEvent(
           new CustomEvent('productUpdated', { detail: product }),
         );
       });
 
       newSocket.on('product_deleted', (data) => {
-        toast.success('Product deleted successfully');
+        // Don't show toast here to avoid duplicate messages
+        // The mutation success handler already shows the message
         window.dispatchEvent(
           new CustomEvent('productDeleted', { detail: data }),
         );

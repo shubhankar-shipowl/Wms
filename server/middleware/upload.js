@@ -2,31 +2,17 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs-extra');
 const sharp = require('sharp');
+const { pool } = require('../config/database');
 
-// Ensure upload directories exist
-const uploadDir = path.join(__dirname, '../uploads');
-const productImagesDir = path.join(uploadDir, 'products');
-
-fs.ensureDirSync(uploadDir);
-fs.ensureDirSync(productImagesDir);
-
-// Configure multer for file uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, productImagesDir);
-  },
-  filename: (req, file, cb) => {
-    // Generate unique filename
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const extension = path.extname(file.originalname);
-    cb(null, `product-${uniqueSuffix}${extension}`);
-  }
-});
+// Configure multer for memory storage (we'll store in database)
+const storage = multer.memoryStorage();
 
 // File filter for images only
 const fileFilter = (req, file, cb) => {
   const allowedTypes = /jpeg|jpg|png|gif|webp/;
-  const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+  const extname = allowedTypes.test(
+    path.extname(file.originalname).toLowerCase(),
+  );
   const mimetype = allowedTypes.test(file.mimetype);
 
   if (mimetype && extname) {
@@ -40,60 +26,111 @@ const fileFilter = (req, file, cb) => {
 const upload = multer({
   storage: storage,
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB limit per file
-    files: 4 // Maximum 4 files per product
+    fileSize: 2 * 1024 * 1024, // 2MB limit per file (reduced for faster processing)
+    files: 4, // Maximum 4 files per product
   },
-  fileFilter: fileFilter
+  fileFilter: fileFilter,
 });
 
-// Middleware to process and optimize uploaded images
+// Middleware to process and store images in database
 const processImages = async (req, res, next) => {
   if (!req.files || req.files.length === 0) {
+    console.log('No images to process, skipping...');
     return next();
   }
 
   try {
-    const processedImages = [];
+    console.log(`Processing ${req.files.length} images...`);
+    console.log(
+      'File details:',
+      req.files.map((f) => ({
+        name: f.originalname,
+        size: f.size,
+        type: f.mimetype,
+      })),
+    );
+    const startTime = Date.now();
 
-    for (const file of req.files) {
-      const originalPath = file.path;
-      const optimizedPath = path.join(
-        productImagesDir,
-        `optimized-${file.filename}`
-      );
+    // Process all images in parallel for better performance
+    const processedImages = await Promise.all(
+      req.files.map(async (file) => {
+        try {
+          // Process original image
+          const originalBuffer = file.buffer;
 
-      // Optimize image using Sharp
-      await sharp(originalPath)
-        .resize(800, 600, {
-          fit: 'inside',
-          withoutEnlargement: true
-        })
-        .jpeg({ quality: 85 })
-        .toFile(optimizedPath);
+          // Get metadata first (lightweight operation)
+          const metadata = await sharp(originalBuffer).metadata();
 
-      // Create thumbnail
-      const thumbnailPath = path.join(
-        productImagesDir,
-        `thumb-${file.filename}`
-      );
+          // Process optimized image and thumbnail in parallel
+          const [optimizedBuffer, thumbnailBuffer] = await Promise.all([
+            // Create optimized image (400x300 max - much smaller for faster processing)
+            sharp(originalBuffer)
+              .resize(400, 300, {
+                fit: 'inside',
+                withoutEnlargement: true,
+              })
+              .jpeg({
+                quality: 60,
+                progressive: false,
+                mozjpeg: false,
+              })
+              .toBuffer(),
 
-      await sharp(originalPath)
-        .resize(200, 150, {
-          fit: 'cover'
-        })
-        .jpeg({ quality: 80 })
-        .toFile(thumbnailPath);
+            // Create thumbnail (100x75 - much smaller for faster processing)
+            sharp(originalBuffer)
+              .resize(100, 75, {
+                fit: 'cover',
+              })
+              .jpeg({
+                quality: 50,
+                progressive: false,
+                mozjpeg: false,
+              })
+              .toBuffer(),
+          ]);
 
-      // Remove original file
-      await fs.remove(originalPath);
+          return {
+            filename: file.originalname,
+            originalName: file.originalname,
+            mimeType: file.mimetype,
+            fileSize: file.size,
+            imageData: optimizedBuffer,
+            thumbnailData: thumbnailBuffer,
+            width: metadata.width,
+            height: metadata.height,
+          };
+        } catch (error) {
+          console.error(`Error processing image ${file.originalname}:`, error);
+          console.error('Image details:', {
+            name: file.originalname,
+            size: file.size,
+            type: file.mimetype,
+            bufferLength: file.buffer.length,
+          });
 
-      processedImages.push({
-        filename: `optimized-${file.filename}`,
-        thumbnail: `thumb-${file.filename}`,
-        originalName: file.originalname,
-        size: file.size
-      });
-    }
+          // If image processing fails, create a minimal fallback
+          console.log('Creating fallback image...');
+          const fallbackBuffer = Buffer.from(
+            '/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/2wBDAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAv/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwA/8A8A',
+            'base64',
+          );
+
+          return {
+            filename: file.originalname,
+            originalName: file.originalname,
+            mimeType: 'image/jpeg',
+            fileSize: file.size,
+            imageData: fallbackBuffer,
+            thumbnailData: fallbackBuffer,
+            width: 1,
+            height: 1,
+          };
+        }
+      }),
+    );
+
+    const processingTime = Date.now() - startTime;
+    console.log(`Image processing completed in ${processingTime}ms`);
 
     req.processedImages = processedImages;
     next();
@@ -103,20 +140,137 @@ const processImages = async (req, res, next) => {
   }
 };
 
+// Function to save images to database
+const saveImagesToDatabase = async (productId, images) => {
+  if (!images || images.length === 0) {
+    return [];
+  }
+
+  console.log(`Saving ${images.length} images to database...`);
+  const startTime = Date.now();
+
+  try {
+    // Use individual inserts to prevent lock timeouts
+    const imageIds = [];
+    const now = new Date();
+
+    console.log(`Starting database insert for ${images.length} images...`);
+
+    for (let i = 0; i < images.length; i++) {
+      const image = images[i];
+      console.log(
+        `Inserting image ${i + 1}/${images.length}: ${image.filename} (${
+          image.imageData.length
+        } bytes)`,
+      );
+
+      const imageStartTime = Date.now();
+
+      // Retry logic for database operations
+      let retries = 3;
+      let result;
+
+      while (retries > 0) {
+        try {
+          [result] = await pool.execute(
+            `INSERT INTO product_images 
+             (product_id, filename, original_name, mime_type, file_size, image_data, thumbnail_data, width, height, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              productId,
+              image.filename,
+              image.originalName,
+              image.mimeType,
+              image.fileSize,
+              image.imageData,
+              image.thumbnailData,
+              image.width,
+              image.height,
+              now,
+              now,
+            ],
+          );
+          break; // Success, exit retry loop
+        } catch (error) {
+          retries--;
+          if (retries === 0) {
+            throw error; // Re-throw if all retries exhausted
+          }
+          console.log(
+            `Database insert failed, retrying... (${retries} retries left)`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1 second before retry
+        }
+      }
+
+      const imageTime = Date.now() - imageStartTime;
+      console.log(
+        `Image ${i + 1} inserted in ${imageTime}ms (ID: ${result.insertId})`,
+      );
+
+      imageIds.push(result.insertId);
+    }
+
+    const dbTime = Date.now() - startTime;
+    console.log(`Database save completed in ${dbTime}ms`);
+
+    return imageIds;
+  } catch (error) {
+    console.error('Error saving images to database:', error);
+    throw error;
+  }
+};
+
+// Function to get images from database
+const getImagesFromDatabase = async (productId) => {
+  const [images] = await pool.execute(
+    'SELECT id, filename, original_name, mime_type, file_size, width, height, created_at FROM product_images WHERE product_id = ? ORDER BY created_at ASC',
+    [productId],
+  );
+
+  return images;
+};
+
+// Function to delete images from database
+const deleteImagesFromDatabase = async (imageIds) => {
+  if (!imageIds || imageIds.length === 0) {
+    return;
+  }
+
+  const placeholders = imageIds.map(() => '?').join(',');
+  await pool.execute(
+    `DELETE FROM product_images WHERE id IN (${placeholders})`,
+    imageIds,
+  );
+};
+
+// Function to get image data from database
+const getImageData = async (imageId, type = 'full') => {
+  const [images] = await pool.execute(
+    `SELECT ${
+      type === 'thumbnail' ? 'thumbnail_data' : 'image_data'
+    } as data, mime_type FROM product_images WHERE id = ?`,
+    [imageId],
+  );
+
+  if (images.length === 0) {
+    return null;
+  }
+
+  return {
+    data: images[0].data,
+    mimeType: images[0].mime_type,
+  };
+};
+
 // Middleware to clean up old images when updating product
-const cleanupOldImages = async (productImages) => {
-  if (!productImages || productImages.length === 0) {
+const cleanupOldImages = async (imageIds) => {
+  if (!imageIds || imageIds.length === 0) {
     return;
   }
 
   try {
-    for (const imagePath of productImages) {
-      const fullPath = path.join(productImagesDir, imagePath);
-      const thumbnailPath = path.join(productImagesDir, imagePath.replace('optimized-', 'thumb-'));
-      
-      await fs.remove(fullPath);
-      await fs.remove(thumbnailPath);
-    }
+    await deleteImagesFromDatabase(imageIds);
   } catch (error) {
     console.error('Error cleaning up old images:', error);
   }
@@ -125,7 +279,9 @@ const cleanupOldImages = async (productImages) => {
 module.exports = {
   upload: upload.array('images', 4), // Accept up to 4 images
   processImages,
+  saveImagesToDatabase,
+  getImagesFromDatabase,
+  deleteImagesFromDatabase,
+  getImageData,
   cleanupOldImages,
-  uploadDir,
-  productImagesDir
 };
