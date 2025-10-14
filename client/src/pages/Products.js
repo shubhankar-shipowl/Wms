@@ -525,9 +525,41 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
 
   const handleImageChange = (event) => {
     const files = Array.from(event.target.files);
+
+    // Validate file count
     if (files.length > 4) {
       toast.error('Maximum 4 images allowed');
       return;
+    }
+
+    // Validate file types and sizes
+    const allowedTypes = [
+      'image/jpeg',
+      'image/jpg',
+      'image/png',
+      'image/gif',
+      'image/webp',
+    ];
+    const maxSize = 2 * 1024 * 1024; // 2MB
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+
+      // Check file type
+      if (!allowedTypes.includes(file.type)) {
+        toast.error(
+          `Invalid file format: ${file.name}. Only JPEG, PNG, GIF, and WEBP images are allowed.`,
+        );
+        return;
+      }
+
+      // Check file size
+      if (file.size > maxSize) {
+        toast.error(
+          `File too large: ${file.name}. Maximum size allowed is 2MB.`,
+        );
+        return;
+      }
     }
 
     setSelectedImages(files);
@@ -628,7 +660,31 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
         reset();
       },
       onError: (error) => {
-        toast.error(error.response?.data?.message || 'Operation failed');
+        console.error('Product operation error:', error);
+        const errorMessage =
+          error.response?.data?.message || 'Operation failed';
+
+        // Show more specific error messages
+        if (
+          errorMessage.includes('Invalid file format') ||
+          errorMessage.includes('Unsupported image format')
+        ) {
+          toast.error(`Image Error: ${errorMessage}`);
+        } else if (
+          errorMessage.includes('too large') ||
+          errorMessage.includes('LIMIT_FILE_SIZE')
+        ) {
+          toast.error(`File Size Error: ${errorMessage}`);
+        } else if (
+          errorMessage.includes('Too many files') ||
+          errorMessage.includes('LIMIT_FILE_COUNT')
+        ) {
+          toast.error(`File Count Error: ${errorMessage}`);
+        } else if (errorMessage.includes('Failed to process images')) {
+          toast.error(`Image Processing Error: ${errorMessage}`);
+        } else {
+          toast.error(errorMessage);
+        }
       },
     },
   );
@@ -846,10 +902,14 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
               <Typography variant="h6" gutterBottom>
                 Product Images (Max 4)
               </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Supported formats: JPEG, PNG, GIF, WEBP • Maximum size: 2MB per
+                file
+              </Typography>
               <input
                 type="file"
                 multiple
-                accept="image/*"
+                accept="image/jpeg,image/jpg,image/png,image/gif,image/webp"
                 onChange={handleImageChange}
                 style={{ marginBottom: '16px' }}
               />

@@ -18,7 +18,11 @@ const fileFilter = (req, file, cb) => {
   if (mimetype && extname) {
     return cb(null, true);
   } else {
-    cb(new Error('Only image files are allowed (jpeg, jpg, png, gif, webp)'));
+    const fileExtension = path.extname(file.originalname).toLowerCase();
+    const errorMessage = `Invalid file format. Only image files are allowed (JPEG, JPG, PNG, GIF, WEBP). Received: ${
+      fileExtension || 'unknown format'
+    }`;
+    cb(new Error(errorMessage));
   }
 };
 
@@ -108,23 +112,29 @@ const processImages = async (req, res, next) => {
             bufferLength: file.buffer.length,
           });
 
-          // If image processing fails, create a minimal fallback
-          console.log('Creating fallback image...');
-          const fallbackBuffer = Buffer.from(
-            '/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/2wBDAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAv/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwA/8A8A',
-            'base64',
-          );
+          // Check for specific error types and provide better error messages
+          let errorMessage = 'Failed to process image';
 
-          return {
-            filename: file.originalname,
-            originalName: file.originalname,
-            mimeType: 'image/jpeg',
-            fileSize: file.size,
-            imageData: fallbackBuffer,
-            thumbnailData: fallbackBuffer,
-            width: 1,
-            height: 1,
-          };
+          if (
+            error.message.includes(
+              'Input file contains unsupported image format',
+            )
+          ) {
+            errorMessage = `Unsupported image format: ${file.originalname}. Please use JPEG, PNG, GIF, or WEBP format.`;
+          } else if (error.message.includes('Input file is missing')) {
+            errorMessage = `Image file is corrupted or empty: ${file.originalname}`;
+          } else if (
+            error.message.includes('Input file is not of a supported format')
+          ) {
+            errorMessage = `Invalid image format: ${file.originalname}. Please ensure the file is a valid image.`;
+          } else if (file.size > 2 * 1024 * 1024) {
+            errorMessage = `Image file too large: ${file.originalname}. Maximum size allowed is 2MB.`;
+          } else {
+            errorMessage = `Failed to process image ${file.originalname}. Please check if the file is a valid image.`;
+          }
+
+          // Throw a more descriptive error instead of creating fallback
+          throw new Error(errorMessage);
         }
       }),
     );

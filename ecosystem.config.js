@@ -1,3 +1,42 @@
+// Load environment variables from .env file
+const path = require('path');
+const fs = require('fs');
+
+// Function to load .env file
+function loadEnvFile(envPath) {
+  const envFile = path.resolve(envPath);
+  if (!fs.existsSync(envFile)) {
+    console.warn(`Environment file not found: ${envFile}`);
+    return {};
+  }
+
+  const envContent = fs.readFileSync(envFile, 'utf8');
+  const envVars = {};
+
+  envContent.split('\n').forEach((line) => {
+    const trimmedLine = line.trim();
+    if (trimmedLine && !trimmedLine.startsWith('#')) {
+      const [key, ...valueParts] = trimmedLine.split('=');
+      if (key && valueParts.length > 0) {
+        let value = valueParts.join('=');
+        // Remove quotes if present
+        if (
+          (value.startsWith('"') && value.endsWith('"')) ||
+          (value.startsWith("'") && value.endsWith("'"))
+        ) {
+          value = value.slice(1, -1);
+        }
+        envVars[key.trim()] = value;
+      }
+    }
+  });
+
+  return envVars;
+}
+
+// Load .env file from server directory
+const envVars = loadEnvFile('./server/.env');
+
 module.exports = {
   apps: [
     {
@@ -10,25 +49,12 @@ module.exports = {
       env: {
         NODE_ENV: 'development',
         PORT: 5001,
+        ...envVars, // Spread all .env variables
       },
       env_production: {
         NODE_ENV: 'production',
         PORT: 5001,
-        DB_HOST: '31.97.61.5',
-        DB_USER: 'wms',
-        DB_PASSWORD: 'Kalbazaar@177',
-        DB_NAME: 'wms_db',
-        DB_PORT: 3306,
-        DB_MAX_CONNECTIONS: 20,
-        DB_CONNECTION_TIMEOUT: 10000,
-        JWT_SECRET: 'your-secret-key',
-        PRINTER_CONNECTION_TYPE: 'cups',
-        REDIS_HOST: 'localhost',
-        REDIS_PORT: 6379,
-        REDIS_PASSWORD: '',
-        REDIS_CACHE_TTL: 3600,
-        VPS_DOMAIN: 'http://localhost:5001',
-        CLIENT_URL: 'http://localhost:5001',
+        ...envVars, // Spread all .env variables for production too
       },
     },
   ],

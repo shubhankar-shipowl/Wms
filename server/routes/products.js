@@ -283,8 +283,50 @@ router.post(
   '/',
   authenticateToken,
   requireRole(['admin', 'user']),
-  upload,
-  processImages,
+  (req, res, next) => {
+    upload(req, res, (err) => {
+      if (err) {
+        console.error('Multer error:', err);
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return res.status(400).json({
+            success: false,
+            message:
+              'Image file too large. Maximum size allowed is 2MB per file.',
+          });
+        } else if (err.code === 'LIMIT_FILE_COUNT') {
+          return res.status(400).json({
+            success: false,
+            message: 'Too many files. Maximum 4 images allowed per product.',
+          });
+        } else if (err.message.includes('Invalid file format')) {
+          return res.status(400).json({
+            success: false,
+            message: err.message,
+          });
+        } else {
+          return res.status(400).json({
+            success: false,
+            message: 'Image upload error: ' + err.message,
+          });
+        }
+      }
+      next();
+    });
+  },
+  (req, res, next) => {
+    processImages(req, res, (err) => {
+      if (err) {
+        console.error('Image processing error:', err);
+        return res.status(400).json({
+          success: false,
+          message:
+            err.message ||
+            'Failed to process images. Please check your image files.',
+        });
+      }
+      next();
+    });
+  },
   async (req, res) => {
     // Set timeout for the request
     let requestCompleted = false;
@@ -369,10 +411,16 @@ router.post(
         console.log(
           `Saving ${req.processedImages.length} processed images to database...`,
         );
-        imageIds = await saveImagesToDatabase(productId, req.processedImages);
-        console.log(
-          `Successfully saved images with IDs: ${imageIds.join(', ')}`,
-        );
+        try {
+          imageIds = await saveImagesToDatabase(productId, req.processedImages);
+          console.log(
+            `Successfully saved images with IDs: ${imageIds.join(', ')}`,
+          );
+        } catch (imageError) {
+          console.error('Error saving images to database:', imageError);
+          // Don't fail the entire product creation if image saving fails
+          // Just log the error and continue
+        }
 
         // Update product with image references (new connection for this operation)
         const updateConnection = await pool.getConnection();
@@ -447,8 +495,50 @@ router.put(
   '/:id',
   authenticateToken,
   requireRole(['admin', 'user']),
-  upload,
-  processImages,
+  (req, res, next) => {
+    upload(req, res, (err) => {
+      if (err) {
+        console.error('Multer error:', err);
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return res.status(400).json({
+            success: false,
+            message:
+              'Image file too large. Maximum size allowed is 2MB per file.',
+          });
+        } else if (err.code === 'LIMIT_FILE_COUNT') {
+          return res.status(400).json({
+            success: false,
+            message: 'Too many files. Maximum 4 images allowed per product.',
+          });
+        } else if (err.message.includes('Invalid file format')) {
+          return res.status(400).json({
+            success: false,
+            message: err.message,
+          });
+        } else {
+          return res.status(400).json({
+            success: false,
+            message: 'Image upload error: ' + err.message,
+          });
+        }
+      }
+      next();
+    });
+  },
+  (req, res, next) => {
+    processImages(req, res, (err) => {
+      if (err) {
+        console.error('Image processing error:', err);
+        return res.status(400).json({
+          success: false,
+          message:
+            err.message ||
+            'Failed to process images. Please check your image files.',
+        });
+      }
+      next();
+    });
+  },
   async (req, res) => {
     let connection;
     try {

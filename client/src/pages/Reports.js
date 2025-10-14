@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState } from 'react';
 import {
   Box,
   Typography,
@@ -21,7 +21,7 @@ import {
   Tabs,
   Tab,
   Alert,
-} from "@mui/material";
+} from '@mui/material';
 import {
   TrendingUp,
   TrendingDown,
@@ -33,7 +33,7 @@ import {
   TableChart,
   Download,
   Refresh,
-} from "@mui/icons-material";
+} from '@mui/icons-material';
 import {
   LineChart,
   Line,
@@ -48,17 +48,17 @@ import {
   Tooltip,
   Legend,
   ResponsiveContainer,
-} from "recharts";
-import { useQuery } from "react-query";
-import axios from "axios";
-import { format } from "date-fns";
-import LoadingSpinner from "../components/Common/LoadingSpinner";
+} from 'recharts';
+import { useQuery } from 'react-query';
+import axios from 'axios';
+import { format } from 'date-fns';
+import LoadingSpinner from '../components/Common/LoadingSpinner';
 
 const MetricCard = ({
   title,
   value,
   icon,
-  color = "primary",
+  color = 'primary',
   subtitle,
   trend,
 }) => (
@@ -66,9 +66,9 @@ const MetricCard = ({
     <CardContent>
       <Box
         sx={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
         }}
       >
         <Box>
@@ -84,7 +84,7 @@ const MetricCard = ({
             </Typography>
           )}
           {trend && (
-            <Box sx={{ display: "flex", alignItems: "center", mt: 1 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
               {trend > 0 ? (
                 <TrendingUp color="success" fontSize="small" />
               ) : (
@@ -92,7 +92,7 @@ const MetricCard = ({
               )}
               <Typography
                 variant="body2"
-                color={trend > 0 ? "success.main" : "error.main"}
+                color={trend > 0 ? 'success.main' : 'error.main'}
                 sx={{ ml: 0.5 }}
               >
                 {Math.abs(trend)}%
@@ -107,7 +107,7 @@ const MetricCard = ({
 );
 
 const Reports = () => {
-  const [selectedPeriod, setSelectedPeriod] = useState("30");
+  const [selectedPeriod, setSelectedPeriod] = useState('30');
   const [selectedTab, setSelectedTab] = useState(0);
 
   // Fetch reports data
@@ -116,38 +116,38 @@ const Reports = () => {
     isLoading,
     refetch,
   } = useQuery(
-    ["reports", selectedPeriod],
+    ['reports', selectedPeriod],
     () =>
       axios
         .get(`/api/reports?period=${selectedPeriod}`)
         .then((res) => res.data),
     {
       refetchInterval: 30000, // Refresh every 30 seconds
-    }
+    },
   );
 
-  const { data: abcAnalysisData } = useQuery("abc-analysis", () =>
-    axios.get("/api/reports/abc-analysis").then((res) => res.data)
+  const { data: abcAnalysisData } = useQuery('abc-analysis', () =>
+    axios.get('/api/reports/abc-analysis').then((res) => res.data),
   );
 
-  const { data: stockMovementsData } = useQuery("stock-movements", () =>
-    axios.get("/api/reports/stock-movements?period=30").then((res) => res.data)
+  const { data: stockMovementsData } = useQuery('stock-movements', () =>
+    axios.get('/api/reports/stock-movements?period=30').then((res) => res.data),
   );
 
-  const { data: topProductsData } = useQuery("top-products", () =>
+  const { data: topProductsData } = useQuery('top-products', () =>
     axios
-      .get("/api/reports/top-products?period=30&limit=10")
-      .then((res) => res.data)
+      .get('/api/reports/top-products?period=30&limit=10')
+      .then((res) => res.data),
   );
 
-  const { data: lowStockData } = useQuery("low-stock", () =>
-    axios.get("/api/reports/low-stock?limit=20").then((res) => res.data)
+  const { data: lowStockData } = useQuery('low-stock', () =>
+    axios.get('/api/reports/low-stock?limit=20').then((res) => res.data),
   );
 
-  const { data: recentTransactionsData } = useQuery("recent-transactions", () =>
+  const { data: recentTransactionsData } = useQuery('recent-transactions', () =>
     axios
-      .get("/api/reports/recent-transactions?limit=50")
-      .then((res) => res.data)
+      .get('/api/reports/recent-transactions?limit=50')
+      .then((res) => res.data),
   );
 
   if (isLoading) {
@@ -164,20 +164,20 @@ const Reports = () => {
   // Prepare chart data - group by date
   const stockMovementData =
     stockMovements?.reduce((acc, item) => {
-      const dateKey = format(new Date(item.date), "MMM dd");
+      const dateKey = format(new Date(item.date), 'MMM dd');
       const existing = acc.find((d) => d.date === dateKey);
 
       if (existing) {
-        if (item.type === "in") {
+        if (item.type === 'in') {
           existing.in = parseInt(item.total_quantity);
-        } else if (item.type === "out") {
+        } else if (item.type === 'out') {
           existing.out = parseInt(item.total_quantity);
         }
       } else {
         acc.push({
           date: dateKey,
-          in: item.type === "in" ? parseInt(item.total_quantity) : 0,
-          out: item.type === "out" ? parseInt(item.total_quantity) : 0,
+          in: item.type === 'in' ? parseInt(item.total_quantity) : 0,
+          out: item.type === 'out' ? parseInt(item.total_quantity) : 0,
         });
       }
       return acc;
@@ -189,54 +189,54 @@ const Reports = () => {
   // ABC Analysis data
   const abcChartData = [
     {
-      category: "A",
+      category: 'A',
       count: abcAnalysis.summary?.A?.length || 0,
       value:
         abcAnalysis.summary?.A?.reduce(
           (sum, item) => sum + parseFloat(item.total_value || 0),
-          0
+          0,
         ) || 0,
       percentage:
         abcAnalysis.summary?.A?.length > 0
           ? (abcAnalysis.summary.A.reduce(
               (sum, item) => sum + parseFloat(item.total_value || 0),
-              0
+              0,
             ) /
               abcAnalysis.totalValue) *
             100
           : 0,
     },
     {
-      category: "B",
+      category: 'B',
       count: abcAnalysis.summary?.B?.length || 0,
       value:
         abcAnalysis.summary?.B?.reduce(
           (sum, item) => sum + parseFloat(item.total_value || 0),
-          0
+          0,
         ) || 0,
       percentage:
         abcAnalysis.summary?.B?.length > 0
           ? (abcAnalysis.summary.B.reduce(
               (sum, item) => sum + parseFloat(item.total_value || 0),
-              0
+              0,
             ) /
               abcAnalysis.totalValue) *
             100
           : 0,
     },
     {
-      category: "C",
+      category: 'C',
       count: abcAnalysis.summary?.C?.length || 0,
       value:
         abcAnalysis.summary?.C?.reduce(
           (sum, item) => sum + parseFloat(item.total_value || 0),
-          0
+          0,
         ) || 0,
       percentage:
         abcAnalysis.summary?.C?.length > 0
           ? (abcAnalysis.summary.C.reduce(
               (sum, item) => sum + parseFloat(item.total_value || 0),
-              0
+              0,
             ) /
               abcAnalysis.totalValue) *
             100
@@ -244,11 +244,111 @@ const Reports = () => {
     },
   ];
 
-  const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042"];
+  const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042'];
 
-  const handleExport = (type) => {
-    // Implement export functionality
-    console.log(`Exporting ${type} report...`);
+  const handleExport = async (type) => {
+    try {
+      let exportUrl = '';
+      let filename = '';
+
+      switch (type) {
+        case 'transactions':
+          exportUrl = '/api/transactions/export/csv';
+          filename = `transactions_export_${
+            new Date().toISOString().split('T')[0]
+          }.csv`;
+          break;
+        case 'low-stock':
+          // Export low stock items as CSV
+          const lowStockCsvHeader = [
+            'Product Name',
+            'SKU',
+            'Current Stock',
+            'Low Stock Threshold',
+            'Status',
+          ].join(',');
+          const lowStockCsvRows = lowStockItems.map((item) =>
+            [
+              `"${item.name || ''}"`,
+              `"${item.sku || ''}"`,
+              item.current_stock || 0,
+              item.low_stock_threshold || 0,
+              `"${
+                item.current_stock <= item.low_stock_threshold
+                  ? 'Low Stock'
+                  : 'Normal'
+              }"`,
+            ].join(','),
+          );
+          const lowStockCsvContent = [
+            lowStockCsvHeader,
+            ...lowStockCsvRows,
+          ].join('\n');
+
+          const lowStockBlob = new Blob([lowStockCsvContent], {
+            type: 'text/csv',
+          });
+          const lowStockUrl = window.URL.createObjectURL(lowStockBlob);
+          const lowStockLink = document.createElement('a');
+          lowStockLink.href = lowStockUrl;
+          lowStockLink.download = `low_stock_items_${
+            new Date().toISOString().split('T')[0]
+          }.csv`;
+          document.body.appendChild(lowStockLink);
+          lowStockLink.click();
+          lowStockLink.remove();
+          window.URL.revokeObjectURL(lowStockUrl);
+          return;
+        case 'reports':
+          // For general reports, we can export the current data as JSON
+          const reportData = {
+            overview: reports,
+            recentTransactions: recentTransactions,
+            lowStockItems: lowStockItems,
+            topProducts: topProducts,
+            stockMovements: stockMovements,
+            abcAnalysis: abcAnalysis,
+            exportDate: new Date().toISOString(),
+            period: selectedPeriod,
+          };
+
+          const dataStr = JSON.stringify(reportData, null, 2);
+          const dataBlob = new Blob([dataStr], { type: 'application/json' });
+          const url = window.URL.createObjectURL(dataBlob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = `wms_report_${
+            new Date().toISOString().split('T')[0]
+          }.json`;
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          window.URL.revokeObjectURL(url);
+          return;
+        default:
+          console.log(`Export type ${type} not implemented yet`);
+          return;
+      }
+
+      if (exportUrl) {
+        const response = await axios.get(exportUrl, {
+          responseType: 'blob',
+        });
+
+        const url = window.URL.createObjectURL(new Blob([response.data]));
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+      }
+    } catch (error) {
+      console.error('Export failed:', error);
+      // You could add a toast notification here
+      alert('Export failed. Please try again.');
+    }
   };
 
   const handleRefresh = () => {
@@ -260,9 +360,9 @@ const Reports = () => {
       {/* Header */}
       <Box
         sx={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
           mb: 3,
         }}
       >
@@ -272,10 +372,10 @@ const Reports = () => {
             component="h1"
             sx={{
               fontWeight: 700,
-              background: "linear-gradient(45deg, #1976d2 30%, #42a5f5 90%)",
-              backgroundClip: "text",
-              WebkitBackgroundClip: "text",
-              WebkitTextFillColor: "transparent",
+              background: 'linear-gradient(45deg, #1976d2 30%, #42a5f5 90%)',
+              backgroundClip: 'text',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
               mb: 0.5,
             }}
           >
@@ -285,7 +385,7 @@ const Reports = () => {
             Comprehensive insights into your warehouse operations
           </Typography>
         </Box>
-        <Box sx={{ display: "flex", gap: 2 }}>
+        <Box sx={{ display: 'flex', gap: 2 }}>
           <FormControl size="small" sx={{ minWidth: 120 }}>
             <InputLabel>Period</InputLabel>
             <Select
@@ -347,7 +447,7 @@ const Reports = () => {
       </Grid>
 
       {/* Tabs */}
-      <Box sx={{ borderBottom: 1, borderColor: "divider", mb: 3 }}>
+      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
         <Tabs
           value={selectedTab}
           onChange={(e, newValue) => setSelectedTab(newValue)}
@@ -422,9 +522,24 @@ const Reports = () => {
           <Grid item xs={12} md={6}>
             <Card>
               <CardContent>
-                <Typography variant="h6" gutterBottom>
-                  Low Stock Items
-                </Typography>
+                <Box
+                  sx={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    mb: 2,
+                  }}
+                >
+                  <Typography variant="h6">Low Stock Items</Typography>
+                  <Button
+                    variant="outlined"
+                    startIcon={<Download />}
+                    onClick={() => handleExport('low-stock')}
+                    size="small"
+                  >
+                    Export
+                  </Button>
+                </Box>
                 <TableContainer>
                   <Table size="small">
                     <TableHead>
@@ -471,14 +586,14 @@ const Reports = () => {
                 <Box sx={{ mt: 2 }}>
                   <Box
                     sx={{
-                      display: "flex",
-                      justifyContent: "space-between",
+                      display: 'flex',
+                      justifyContent: 'space-between',
                       mb: 1,
                     }}
                   >
                     <Typography variant="body2">In Stock Items</Typography>
                     <Typography variant="body2">
-                      {reports.inStockProducts || 0} /{" "}
+                      {reports.inStockProducts || 0} /{' '}
                       {reports.totalProducts || 0}
                     </Typography>
                   </Box>
@@ -493,8 +608,8 @@ const Reports = () => {
                   />
                   <Box
                     sx={{
-                      display: "flex",
-                      justifyContent: "space-between",
+                      display: 'flex',
+                      justifyContent: 'space-between',
                       mb: 1,
                     }}
                   >
@@ -527,9 +642,9 @@ const Reports = () => {
               <CardContent>
                 <Box
                   sx={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
                     mb: 2,
                   }}
                 >
@@ -537,7 +652,7 @@ const Reports = () => {
                   <Button
                     variant="outlined"
                     startIcon={<Download />}
-                    onClick={() => handleExport("transactions")}
+                    onClick={() => handleExport('transactions')}
                     size="small"
                   >
                     Export
@@ -561,15 +676,15 @@ const Reports = () => {
                           <TableCell>
                             {format(
                               new Date(transaction.created_at),
-                              "MMM dd, yyyy HH:mm"
+                              'MMM dd, yyyy HH:mm',
                             )}
                           </TableCell>
                           <TableCell>{transaction.product_name}</TableCell>
                           <TableCell>
                             <Chip
-                              label={transaction.type?.toUpperCase() || "N/A"}
+                              label={transaction.type?.toUpperCase() || 'N/A'}
                               color={
-                                transaction.type === "in" ? "success" : "error"
+                                transaction.type === 'in' ? 'success' : 'error'
                               }
                               size="small"
                             />
@@ -579,7 +694,7 @@ const Reports = () => {
                           </TableCell>
                           <TableCell>{transaction.reference_number}</TableCell>
                           <TableCell>
-                            {transaction.created_by_username || "N/A"}
+                            {transaction.created_by_username || 'N/A'}
                           </TableCell>
                         </TableRow>
                       )) || []}
@@ -652,11 +767,11 @@ const Reports = () => {
                             <Chip
                               label={`Category ${item.category}`}
                               color={
-                                item.category === "A"
-                                  ? "error"
-                                  : item.category === "B"
-                                  ? "warning"
-                                  : "default"
+                                item.category === 'A'
+                                  ? 'error'
+                                  : item.category === 'B'
+                                  ? 'warning'
+                                  : 'default'
                               }
                               size="small"
                             />
@@ -681,8 +796,8 @@ const Reports = () => {
 
       {/* No Data State */}
       {!reportsData && !abcAnalysisData && !stockMovementsData && (
-        <Box sx={{ textAlign: "center", py: 8 }}>
-          <Alert severity="info" sx={{ maxWidth: 600, mx: "auto" }}>
+        <Box sx={{ textAlign: 'center', py: 8 }}>
+          <Alert severity="info" sx={{ maxWidth: 600, mx: 'auto' }}>
             <Typography variant="h6" gutterBottom>
               No Data Available
             </Typography>
