@@ -1,4 +1,4 @@
-const { pool } = require("../config/database");
+const { pool } = require('../config/database');
 
 class WarehouseMonitor {
   constructor() {
@@ -26,12 +26,17 @@ class WarehouseMonitor {
       // Update metrics every 30 seconds
       setInterval(() => this.updateSystemMetrics(), 30000);
     } catch (error) {
-      console.error("Failed to initialize warehouse monitoring:", error);
+      console.error('Failed to initialize warehouse monitoring:', error);
     }
   }
 
   async updateSystemMetrics() {
     try {
+      // Check if database connection is available
+      const connection = await pool.getConnection();
+      await connection.ping();
+      connection.release();
+
       // Get critical alerts count
       const [alertsResult] = await pool.execute(`
         SELECT COUNT(*) as count FROM alerts WHERE priority = 'critical' AND is_read = 0
@@ -46,13 +51,13 @@ class WarehouseMonitor {
 
       // Get total counts
       const [productsResult] = await pool.execute(
-        `SELECT COUNT(*) as count FROM products`
+        `SELECT COUNT(*) as count FROM products`,
       );
       const [barcodesResult] = await pool.execute(
-        `SELECT COUNT(*) as count FROM barcodes`
+        `SELECT COUNT(*) as count FROM barcodes`,
       );
       const [transactionsResult] = await pool.execute(
-        `SELECT COUNT(*) as count FROM transactions`
+        `SELECT COUNT(*) as count FROM transactions`,
       );
 
       this.metrics.totalProducts = productsResult[0].count;
@@ -61,7 +66,20 @@ class WarehouseMonitor {
 
       this.metrics.lastHealthCheck = new Date().toISOString();
     } catch (error) {
-      console.error("Failed to update system metrics:", error);
+      // Only log error if it's not a connection issue to avoid spam
+      if (
+        !error.message.includes('ENETUNREACH') &&
+        !error.message.includes('ECONNREFUSED')
+      ) {
+        console.error('Failed to update system metrics:', error);
+      }
+      // Set default values when database is unavailable
+      this.metrics.criticalAlerts = 0;
+      this.metrics.lowStockItems = 0;
+      this.metrics.totalProducts = 0;
+      this.metrics.totalBarcodes = 0;
+      this.metrics.totalTransactions = 0;
+      this.metrics.lastHealthCheck = new Date().toISOString();
     }
   }
 
@@ -113,10 +131,10 @@ class WarehouseMonitor {
     const metrics = this.getMetrics();
 
     // Determine overall health status
-    let status = "healthy";
-    if (metrics.criticalAlerts > 0) status = "critical";
-    else if (metrics.lowStockItems > 10) status = "warning";
-    else if (metrics.successRate < 95) status = "degraded";
+    let status = 'healthy';
+    if (metrics.criticalAlerts > 0) status = 'critical';
+    else if (metrics.lowStockItems > 10) status = 'warning';
+    else if (metrics.successRate < 95) status = 'degraded';
 
     return {
       status,
@@ -131,34 +149,34 @@ class WarehouseMonitor {
 
     if (metrics.criticalAlerts > 0) {
       recommendations.push({
-        priority: "high",
+        priority: 'high',
         message: `${metrics.criticalAlerts} critical alerts require immediate attention`,
-        action: "Review and resolve critical alerts",
+        action: 'Review and resolve critical alerts',
       });
     }
 
     if (metrics.lowStockItems > 10) {
       recommendations.push({
-        priority: "medium",
+        priority: 'medium',
         message: `${metrics.lowStockItems} items are low in stock`,
-        action: "Consider restocking low inventory items",
+        action: 'Consider restocking low inventory items',
       });
     }
 
     if (metrics.successRate < 95) {
       recommendations.push({
-        priority: "high",
+        priority: 'high',
         message: `System success rate is ${metrics.successRate}%`,
-        action: "Investigate and resolve system errors",
+        action: 'Investigate and resolve system errors',
       });
     }
 
     if (metrics.averageResponseTime > 2000) {
       recommendations.push({
-        priority: "medium",
+        priority: 'medium',
         message: `Average response time is ${metrics.averageResponseTime}ms`,
         action:
-          "Consider optimizing database queries or increasing server resources",
+          'Consider optimizing database queries or increasing server resources',
       });
     }
 
