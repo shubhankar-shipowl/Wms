@@ -1,17 +1,17 @@
-const express = require("express");
-const Joi = require("joi");
-const { pool, getTableName } = require("../config/database");
-const { authenticateToken, requireRole } = require("../middleware/auth");
+const express = require('express');
+const Joi = require('joi');
+const { pool, getTableName } = require('../config/database');
+const { authenticateToken, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
 // Validation schemas
 const transactionSchema = Joi.object({
   product_id: Joi.number().integer().required(),
-  type: Joi.string().valid("in", "out").required(),
+  type: Joi.string().valid('in', 'out').required(),
   quantity: Joi.number().integer().min(1).required(),
-  reference_number: Joi.string().allow(""),
-  notes: Joi.string().allow(""),
+  reference_number: Joi.string().allow(''),
+  notes: Joi.string().allow(''),
 });
 
 const bulkTransactionSchema = Joi.object({
@@ -19,7 +19,7 @@ const bulkTransactionSchema = Joi.object({
 });
 
 // Get all transactions with filtering
-router.get("/", authenticateToken, async (req, res) => {
+router.get('/', authenticateToken, async (req, res) => {
   try {
     const {
       page = 1,
@@ -49,49 +49,61 @@ router.get("/", authenticateToken, async (req, res) => {
     `;
 
     if (product_id) {
-      conditions.push("t.product_id = ?");
+      conditions.push('t.product_id = ?');
       params.push(product_id);
     }
 
     if (product_name) {
-      conditions.push("t.product_id = ?");
+      conditions.push('t.product_id = ?');
       params.push(product_name);
     }
 
     if (type) {
-      conditions.push("t.type = ?");
+      conditions.push('t.type = ?');
       params.push(type);
     }
 
     if (start_date) {
-      conditions.push("DATE(t.created_at) >= ?");
+      conditions.push('DATE(t.created_at) >= ?');
       params.push(start_date);
     }
 
     if (end_date) {
-      conditions.push("DATE(t.created_at) <= ?");
+      conditions.push('DATE(t.created_at) <= ?');
       params.push(end_date);
     }
 
     if (reference_number) {
-      conditions.push("t.reference_number LIKE ?");
+      conditions.push('t.reference_number LIKE ?');
       params.push(`%${reference_number}%`);
     }
 
     if (user_id) {
-      conditions.push("t.user_id = ?");
+      conditions.push('t.user_id = ?');
       params.push(user_id);
     }
 
     if (conditions.length > 0) {
-      query += " WHERE " + conditions.join(" AND ");
+      query += ' WHERE ' + conditions.join(' AND ');
     }
 
     query += ` ORDER BY t.created_at DESC LIMIT ${parseInt(
-      limit
+      limit,
     )} OFFSET ${parseInt(offset)}`;
 
     const [transactions] = await pool.execute(query, params);
+
+    // Derive barcode number from notes when present (pattern: "Barcode: <digits>")
+    const transactionsWithBarcode = transactions.map((t) => {
+      let extractedBarcode = null;
+      try {
+        const match = (t.notes || '').match(/Barcode:\s*(\d+)/);
+        extractedBarcode = match ? match[1] : null;
+      } catch (_) {
+        extractedBarcode = null;
+      }
+      return { ...t, barcode: extractedBarcode };
+    });
 
     // Get total count
     let countQuery = `
@@ -101,7 +113,7 @@ router.get("/", authenticateToken, async (req, res) => {
     `;
 
     if (conditions.length > 0) {
-      countQuery += " WHERE " + conditions.join(" AND ");
+      countQuery += ' WHERE ' + conditions.join(' AND ');
     }
 
     const [countResult] = await pool.execute(countQuery, params);
@@ -109,7 +121,7 @@ router.get("/", authenticateToken, async (req, res) => {
     res.json({
       success: true,
       data: {
-        transactions,
+        transactions: transactionsWithBarcode,
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),
@@ -119,16 +131,16 @@ router.get("/", authenticateToken, async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Get transactions error:", error);
+    console.error('Get transactions error:', error);
     res.status(500).json({
       success: false,
-      message: "Internal server error",
+      message: 'Internal server error',
     });
   }
 });
 
 // Export transactions to CSV
-router.get("/export/csv", authenticateToken, async (req, res) => {
+router.get('/export/csv', authenticateToken, async (req, res) => {
   try {
     const {
       product_id,
@@ -159,112 +171,112 @@ router.get("/export/csv", authenticateToken, async (req, res) => {
     `;
 
     if (product_id) {
-      conditions.push("t.product_id = ?");
+      conditions.push('t.product_id = ?');
       params.push(product_id);
     }
 
     if (type) {
-      conditions.push("t.type = ?");
+      conditions.push('t.type = ?');
       params.push(type);
     }
 
     if (start_date) {
-      conditions.push("DATE(t.created_at) >= ?");
+      conditions.push('DATE(t.created_at) >= ?');
       params.push(start_date);
     }
 
     if (end_date) {
-      conditions.push("DATE(t.created_at) <= ?");
+      conditions.push('DATE(t.created_at) <= ?');
       params.push(end_date);
     }
 
     if (reference_number) {
-      conditions.push("t.reference_number LIKE ?");
+      conditions.push('t.reference_number LIKE ?');
       params.push(`%${reference_number}%`);
     }
 
     if (user_id) {
-      conditions.push("t.user_id = ?");
+      conditions.push('t.user_id = ?');
       params.push(user_id);
     }
 
     if (conditions.length > 0) {
-      query += " WHERE " + conditions.join(" AND ");
+      query += ' WHERE ' + conditions.join(' AND ');
     }
 
-    query += " ORDER BY t.created_at DESC";
+    query += ' ORDER BY t.created_at DESC';
 
     const [transactions] = await pool.execute(query, params);
 
     // Generate CSV content
     const csvHeader = [
-      "ID",
-      "Date & Time",
-      "Product Name",
-      "SKU",
-      "Type",
-      "Quantity",
-      "Barcode Number",
-      "Created By",
-    ].join(",");
+      'ID',
+      'Date & Time',
+      'Product Name',
+      'SKU',
+      'Type',
+      'Quantity',
+      'Barcode Number',
+      'Created By',
+    ].join(',');
 
     const csvRows = transactions.map((transaction) => {
-      const date = new Date(transaction.created_at).toLocaleString("en-US", {
-        year: "numeric",
-        month: "short",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
+      const date = new Date(transaction.created_at).toLocaleString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
         hour12: false,
       });
 
       // Extract barcode from notes (look for "Barcode: XXXXX" pattern)
-      const barcodeMatch = (transaction.notes || "").match(/Barcode:\s*(\d+)/);
-      const barcodeNumber = barcodeMatch ? barcodeMatch[1] : "";
+      const barcodeMatch = (transaction.notes || '').match(/Barcode:\s*(\d+)/);
+      const barcodeNumber = barcodeMatch ? barcodeMatch[1] : '';
 
       return [
         transaction.id,
         `"${date}"`,
-        `"${transaction.product_name || ""}"`,
-        `"${transaction.product_sku || ""}"`,
-        `"${transaction.type?.toUpperCase() || ""}"`,
+        `"${transaction.product_name || ''}"`,
+        `"${transaction.product_sku || ''}"`,
+        `"${transaction.type?.toUpperCase() || ''}"`,
         transaction.quantity || 0,
         `"${barcodeNumber}"`,
-        `"${transaction.created_by_username || ""}"`,
-      ].join(",");
+        `"${transaction.created_by_username || ''}"`,
+      ].join(',');
     });
 
-    const csvContent = [csvHeader, ...csvRows].join("\n");
+    const csvContent = [csvHeader, ...csvRows].join('\n');
 
     // Set headers for CSV download
     const filename = `transactions_export_${
-      new Date().toISOString().split("T")[0]
+      new Date().toISOString().split('T')[0]
     }.csv`;
 
-    res.setHeader("Content-Type", "text/csv");
-    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-    res.setHeader("Pragma", "no-cache");
-    res.setHeader("Expires", "0");
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
 
     res.send(csvContent);
   } catch (error) {
-    console.error("Export transactions CSV error:", error);
+    console.error('Export transactions CSV error:', error);
     res.status(500).json({
       success: false,
-      message: "Failed to export transactions to CSV",
+      message: 'Failed to export transactions to CSV',
     });
   }
 });
 
 // Get transactions summary for dashboard
-router.get("/summary", authenticateToken, async (req, res) => {
+router.get('/summary', authenticateToken, async (req, res) => {
   try {
     const { days = 30, product_id, start_date, end_date } = req.query;
 
     // Build WHERE clause for date filtering
-    let whereClause = "";
+    let whereClause = '';
     const params = [];
 
     if (start_date && end_date) {
@@ -272,7 +284,7 @@ router.get("/summary", authenticateToken, async (req, res) => {
       whereClause = `DATE(t.created_at) >= ? AND DATE(t.created_at) <= ?`;
       params.push(start_date, end_date);
       console.log(
-        `[TRANSACTIONS] Date range filter: ${start_date} to ${end_date}`
+        `[TRANSACTIONS] Date range filter: ${start_date} to ${end_date}`,
       );
     } else if (start_date) {
       // Use start date to today
@@ -287,7 +299,7 @@ router.get("/summary", authenticateToken, async (req, res) => {
     } else {
       // Use days parameter (default behavior)
       whereClause = `t.created_at >= DATE_SUB(CURDATE(), INTERVAL ${parseInt(
-        days
+        days,
       )} DAY)`;
       console.log(`[TRANSACTIONS] Days filter: ${days} days`);
     }
@@ -304,7 +316,7 @@ router.get("/summary", authenticateToken, async (req, res) => {
       FROM transactions t
       WHERE ${whereClause}
     `,
-      params
+      params,
     );
 
     // Get transaction quantities
@@ -316,7 +328,7 @@ router.get("/summary", authenticateToken, async (req, res) => {
       FROM transactions t
       WHERE ${whereClause}
     `,
-      params
+      params,
     );
 
     // Get individual quantities from filtered transactions
@@ -332,7 +344,7 @@ router.get("/summary", authenticateToken, async (req, res) => {
       // For specific product, get its current stock
       const [productResult] = await pool.execute(
         `SELECT stock_quantity FROM products WHERE id = ?`,
-        [product_id]
+        [product_id],
       );
       currentStock =
         productResult.length > 0
@@ -350,7 +362,7 @@ router.get("/summary", authenticateToken, async (req, res) => {
     } else {
       // For all products
       const [allProductsResult] = await pool.execute(
-        `SELECT COALESCE(SUM(stock_quantity), 0) as total_current_stock FROM products`
+        `SELECT COALESCE(SUM(stock_quantity), 0) as total_current_stock FROM products`,
       );
       currentStock = parseInt(allProductsResult[0].total_current_stock);
 
@@ -386,21 +398,21 @@ router.get("/summary", authenticateToken, async (req, res) => {
 
     console.log(
       `[TRANSACTIONS] API Response for date range ${start_date} to ${end_date}:`,
-      JSON.stringify(responseData, null, 2)
+      JSON.stringify(responseData, null, 2),
     );
 
     res.json(responseData);
   } catch (error) {
-    console.error("Get transactions summary error:", error);
+    console.error('Get transactions summary error:', error);
     res.status(500).json({
       success: false,
-      message: "Internal server error",
+      message: 'Internal server error',
     });
   }
 });
 
 // Create new transaction
-router.post("/", authenticateToken, async (req, res) => {
+router.post('/', authenticateToken, async (req, res) => {
   let connection;
   try {
     const { error } = transactionSchema.validate(req.body);
@@ -415,8 +427,8 @@ router.post("/", authenticateToken, async (req, res) => {
       product_id,
       type,
       quantity,
-      reference_number = "",
-      notes = "",
+      reference_number = '',
+      notes = '',
     } = req.body;
 
     connection = await pool.getConnection();
@@ -424,15 +436,15 @@ router.post("/", authenticateToken, async (req, res) => {
 
     // Check if product exists
     const [productRows] = await connection.execute(
-      "SELECT id, name, sku FROM products WHERE id = ?",
-      [product_id]
+      'SELECT id, name, sku FROM products WHERE id = ?',
+      [product_id],
     );
 
     if (productRows.length === 0) {
       await connection.rollback();
       return res.status(404).json({
         success: false,
-        message: "Product not found",
+        message: 'Product not found',
       });
     }
 
@@ -440,46 +452,46 @@ router.post("/", authenticateToken, async (req, res) => {
     const [result] = await connection.execute(
       `INSERT INTO products (product_id, type, quantity, reference_number, notes, user_id, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-      [product_id, type, quantity, reference_number, notes, req.user.id]
+      [product_id, type, quantity, reference_number, notes, req.user.id],
     );
 
     const transactionId = result.insertId;
 
     // UPDATE products
     const [inventoryRows] = await connection.execute(
-      "SELECT id, quantity FROM products WHERE product_id = ?",
-      [product_id]
+      'SELECT id, quantity FROM products WHERE product_id = ?',
+      [product_id],
     );
 
     if (inventoryRows.length > 0) {
       // Update existing inventory
       const currentQuantity = inventoryRows[0].quantity;
       const newQuantity =
-        type === "in"
+        type === 'in'
           ? currentQuantity + quantity
           : Math.max(0, currentQuantity - quantity);
 
       await connection.execute(
-        "UPDATE products SET quantity = ?, last_updated = NOW() WHERE product_id = ?",
-        [newQuantity, product_id]
+        'UPDATE products SET quantity = ?, last_updated = NOW() WHERE product_id = ?',
+        [newQuantity, product_id],
       );
 
       // Update product stock_quantity
       await connection.execute(
-        "UPDATE products SET stock_quantity = ?, updated_at = NOW() WHERE id = ?",
-        [newQuantity, product_id]
+        'UPDATE products SET stock_quantity = ?, updated_at = NOW() WHERE id = ?',
+        [newQuantity, product_id],
       );
-    } else if (type === "in") {
+    } else if (type === 'in') {
       // Create new inventory record for incoming stock
       await connection.execute(
-        "INSERT INTO products (product_id, quantity, last_updated) VALUES (?, ?, NOW())",
-        [product_id, quantity]
+        'INSERT INTO products (product_id, quantity, last_updated) VALUES (?, ?, NOW())',
+        [product_id, quantity],
       );
 
       // Update product stock_quantity
       await connection.execute(
-        "UPDATE products SET stock_quantity = ?, updated_at = NOW() WHERE id = ?",
-        [quantity, product_id]
+        'UPDATE products SET stock_quantity = ?, updated_at = NOW() WHERE id = ?',
+        [quantity, product_id],
       );
     }
 
@@ -487,23 +499,23 @@ router.post("/", authenticateToken, async (req, res) => {
 
     // Get the created transaction
     const [transactionRows] = await connection.execute(
-      "SELECT * FROM products WHERE id = ?",
-      [transactionId]
+      'SELECT * FROM products WHERE id = ?',
+      [transactionId],
     );
 
     res.status(201).json({
       success: true,
-      message: "Transaction created successfully",
+      message: 'Transaction created successfully',
       data: transactionRows[0],
     });
   } catch (error) {
     if (connection) {
       await connection.rollback();
     }
-    console.error("Create transaction error:", error);
+    console.error('Create transaction error:', error);
     res.status(500).json({
       success: false,
-      message: "Internal server error",
+      message: 'Internal server error',
     });
   } finally {
     if (connection) {
@@ -514,9 +526,9 @@ router.post("/", authenticateToken, async (req, res) => {
 
 // Create bulk transactions
 router.post(
-  "/bulk",
+  '/bulk',
   authenticateToken,
-  requireRole(["admin", "manager"]),
+  requireRole(['admin', 'manager']),
   async (req, res) => {
     let connection;
     try {
@@ -540,14 +552,14 @@ router.post(
           product_id,
           type,
           quantity,
-          reference_number = "",
-          notes = "",
+          reference_number = '',
+          notes = '',
         } = transaction;
 
         // Check if product exists
         const [productRows] = await connection.execute(
-          "SELECT id FROM products WHERE id = ?",
-          [product_id]
+          'SELECT id FROM products WHERE id = ?',
+          [product_id],
         );
 
         if (productRows.length === 0) {
@@ -562,42 +574,42 @@ router.post(
         const [result] = await connection.execute(
           `INSERT INTO products (product_id, type, quantity, reference_number, notes, user_id, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-          [product_id, type, quantity, reference_number, notes, req.user.id]
+          [product_id, type, quantity, reference_number, notes, req.user.id],
         );
 
         createdTransactions.push(result.insertId);
 
         // UPDATE products
         const [inventoryRows] = await connection.execute(
-          "SELECT id, quantity FROM products WHERE product_id = ?",
-          [product_id]
+          'SELECT id, quantity FROM products WHERE product_id = ?',
+          [product_id],
         );
 
         if (inventoryRows.length > 0) {
           const currentQuantity = inventoryRows[0].quantity;
           const newQuantity =
-            type === "in"
+            type === 'in'
               ? currentQuantity + quantity
               : Math.max(0, currentQuantity - quantity);
 
           await connection.execute(
-            "UPDATE products SET quantity = ?, last_updated = NOW() WHERE product_id = ?",
-            [newQuantity, product_id]
+            'UPDATE products SET quantity = ?, last_updated = NOW() WHERE product_id = ?',
+            [newQuantity, product_id],
           );
 
           await connection.execute(
-            "UPDATE products SET stock_quantity = ?, updated_at = NOW() WHERE id = ?",
-            [newQuantity, product_id]
+            'UPDATE products SET stock_quantity = ?, updated_at = NOW() WHERE id = ?',
+            [newQuantity, product_id],
           );
-        } else if (type === "in") {
+        } else if (type === 'in') {
           await connection.execute(
-            "INSERT INTO products (product_id, quantity, last_updated) VALUES (?, ?, NOW())",
-            [product_id, quantity]
+            'INSERT INTO products (product_id, quantity, last_updated) VALUES (?, ?, NOW())',
+            [product_id, quantity],
           );
 
           await connection.execute(
-            "UPDATE products SET stock_quantity = ?, updated_at = NOW() WHERE id = ?",
-            [quantity, product_id]
+            'UPDATE products SET stock_quantity = ?, updated_at = NOW() WHERE id = ?',
+            [quantity, product_id],
           );
         }
       }
@@ -613,21 +625,21 @@ router.post(
       if (connection) {
         await connection.rollback();
       }
-      console.error("Create bulk transactions error:", error);
+      console.error('Create bulk transactions error:', error);
       res.status(500).json({
         success: false,
-        message: "Internal server error",
+        message: 'Internal server error',
       });
     } finally {
       if (connection) {
         connection.release();
       }
     }
-  }
+  },
 );
 
 // Get transaction by ID
-router.get("/:id", authenticateToken, async (req, res) => {
+router.get('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -641,13 +653,13 @@ router.get("/:id", authenticateToken, async (req, res) => {
       JOIN products p ON t.product_id = p.id
       LEFT JOIN users u ON t.user_id = u.id
       WHERE t.id = ?`,
-      [id]
+      [id],
     );
 
     if (transactionRows.length === 0) {
       return res.status(404).json({
         success: false,
-        message: "Transaction not found",
+        message: 'Transaction not found',
       });
     }
 
@@ -656,19 +668,19 @@ router.get("/:id", authenticateToken, async (req, res) => {
       data: transactionRows[0],
     });
   } catch (error) {
-    console.error("Get transaction error:", error);
+    console.error('Get transaction error:', error);
     res.status(500).json({
       success: false,
-      message: "Internal server error",
+      message: 'Internal server error',
     });
   }
 });
 
 // Update transaction
 router.put(
-  "/:id",
+  '/:id',
   authenticateToken,
-  requireRole(["admin", "manager"]),
+  requireRole(['admin', 'manager']),
   async (req, res) => {
     let connection;
     try {
@@ -680,15 +692,15 @@ router.put(
 
       // Get existing transaction
       const [existingRows] = await connection.execute(
-        "SELECT * FROM products WHERE id = ?",
-        [id]
+        'SELECT * FROM products WHERE id = ?',
+        [id],
       );
 
       if (existingRows.length === 0) {
         await connection.rollback();
         return res.status(404).json({
           success: false,
-          message: "Transaction not found",
+          message: 'Transaction not found',
         });
       }
 
@@ -696,42 +708,42 @@ router.put(
 
       // Update transaction
       await connection.execute(
-        "UPDATE products SET type = ?, quantity = ?, reference_number = ?, notes = ?, updated_at = NOW() WHERE id = ?",
-        [type, quantity, reference_number, notes, id]
+        'UPDATE products SET type = ?, quantity = ?, reference_number = ?, notes = ?, updated_at = NOW() WHERE id = ?',
+        [type, quantity, reference_number, notes, id],
       );
 
       // Recalculate inventory if quantity or type changed
       if (quantity !== existing.quantity || type !== existing.type) {
         // Revert old transaction
         const oldQuantity =
-          existing.type === "in" ? existing.quantity : -existing.quantity;
+          existing.type === 'in' ? existing.quantity : -existing.quantity;
 
         // Apply new transaction
-        const newQuantity = type === "in" ? quantity : -quantity;
+        const newQuantity = type === 'in' ? quantity : -quantity;
 
         const netChange = newQuantity - oldQuantity;
 
         if (netChange !== 0) {
           const [inventoryRows] = await connection.execute(
-            "SELECT quantity FROM products WHERE product_id = ?",
-            [existing.product_id]
+            'SELECT quantity FROM products WHERE product_id = ?',
+            [existing.product_id],
           );
 
           if (inventoryRows.length > 0) {
             const currentQuantity = inventoryRows[0].quantity;
             const newInventoryQuantity = Math.max(
               0,
-              currentQuantity + netChange
+              currentQuantity + netChange,
             );
 
             await connection.execute(
-              "UPDATE products SET quantity = ?, last_updated = NOW() WHERE product_id = ?",
-              [newInventoryQuantity, existing.product_id]
+              'UPDATE products SET quantity = ?, last_updated = NOW() WHERE product_id = ?',
+              [newInventoryQuantity, existing.product_id],
             );
 
             await connection.execute(
-              "UPDATE products SET stock_quantity = ?, updated_at = NOW() WHERE id = ?",
-              [newInventoryQuantity, existing.product_id]
+              'UPDATE products SET stock_quantity = ?, updated_at = NOW() WHERE id = ?',
+              [newInventoryQuantity, existing.product_id],
             );
           }
         }
@@ -741,30 +753,30 @@ router.put(
 
       res.json({
         success: true,
-        message: "Transaction updated successfully",
+        message: 'Transaction updated successfully',
       });
     } catch (error) {
       if (connection) {
         await connection.rollback();
       }
-      console.error("Update transaction error:", error);
+      console.error('Update transaction error:', error);
       res.status(500).json({
         success: false,
-        message: "Internal server error",
+        message: 'Internal server error',
       });
     } finally {
       if (connection) {
         connection.release();
       }
     }
-  }
+  },
 );
 
 // Delete transaction
 router.delete(
-  "/:id",
+  '/:id',
   authenticateToken,
-  requireRole(["admin"]),
+  requireRole(['admin']),
   async (req, res) => {
     let connection;
     try {
@@ -775,15 +787,15 @@ router.delete(
 
       // Get existing transaction
       const [existingRows] = await connection.execute(
-        "SELECT * FROM products WHERE id = ?",
-        [id]
+        'SELECT * FROM products WHERE id = ?',
+        [id],
       );
 
       if (existingRows.length === 0) {
         await connection.rollback();
         return res.status(404).json({
           success: false,
-          message: "Transaction not found",
+          message: 'Transaction not found',
         });
       }
 
@@ -791,11 +803,11 @@ router.delete(
 
       // Revert inventory changes
       const quantityChange =
-        existing.type === "in" ? -existing.quantity : existing.quantity;
+        existing.type === 'in' ? -existing.quantity : existing.quantity;
 
       const [inventoryRows] = await connection.execute(
-        "SELECT quantity FROM products WHERE product_id = ?",
-        [existing.product_id]
+        'SELECT quantity FROM products WHERE product_id = ?',
+        [existing.product_id],
       );
 
       if (inventoryRows.length > 0) {
@@ -803,40 +815,40 @@ router.delete(
         const newQuantity = Math.max(0, currentQuantity + quantityChange);
 
         await connection.execute(
-          "UPDATE products SET quantity = ?, last_updated = NOW() WHERE product_id = ?",
-          [newQuantity, existing.product_id]
+          'UPDATE products SET quantity = ?, last_updated = NOW() WHERE product_id = ?',
+          [newQuantity, existing.product_id],
         );
 
         await connection.execute(
-          "UPDATE products SET stock_quantity = ?, updated_at = NOW() WHERE id = ?",
-          [newQuantity, existing.product_id]
+          'UPDATE products SET stock_quantity = ?, updated_at = NOW() WHERE id = ?',
+          [newQuantity, existing.product_id],
         );
       }
 
       // Delete transaction
-      await connection.execute("DELETE FROM products WHERE id = ?", [id]);
+      await connection.execute('DELETE FROM products WHERE id = ?', [id]);
 
       await connection.commit();
 
       res.json({
         success: true,
-        message: "Transaction deleted successfully",
+        message: 'Transaction deleted successfully',
       });
     } catch (error) {
       if (connection) {
         await connection.rollback();
       }
-      console.error("Delete transaction error:", error);
+      console.error('Delete transaction error:', error);
       res.status(500).json({
         success: false,
-        message: "Internal server error",
+        message: 'Internal server error',
       });
     } finally {
       if (connection) {
         connection.release();
       }
     }
-  }
+  },
 );
 
 module.exports = router;

@@ -1080,7 +1080,8 @@ const Products = () => {
         .get('/api/products', {
           params: {
             search,
-            limit: 50,
+            // Fetch a larger page size to avoid missing cards when scrolling
+            limit: 1000,
             sortBy: skuFilter === 'none' ? 'total_stock' : 'sku',
             sortOrder: skuFilter === 'none' ? sortOrder : skuSortOrder,
           },

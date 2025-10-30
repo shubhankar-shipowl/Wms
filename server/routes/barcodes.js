@@ -1,9 +1,9 @@
-const express = require("express");
-const Joi = require("joi");
-const { v4: uuidv4 } = require("uuid");
-const { pool, getTableName } = require("../config/database");
-const { authenticateToken, requireRole } = require("../middleware/auth");
-const printerService = require("../services/printerService");
+const express = require('express');
+const Joi = require('joi');
+const { v4: uuidv4 } = require('uuid');
+const { pool, getTableName } = require('../config/database');
+const { authenticateToken, requireRole } = require('../middleware/auth');
+const printerService = require('../services/printerService');
 
 const router = express.Router();
 
@@ -18,7 +18,7 @@ const bulkBarcodeSchema = Joi.object({
   product_id: Joi.number().integer().required(),
   quantity: Joi.number().integer().min(1).max(1000).required(),
   units_per_barcode: Joi.number().integer().min(0).default(0),
-  distribution_type: Joi.string().valid("equal", "manual").default("equal"),
+  distribution_type: Joi.string().valid('equal', 'manual').default('equal'),
   manual_distribution: Joi.array()
     .items(Joi.number().integer().min(0))
     .optional(),
@@ -26,9 +26,9 @@ const bulkBarcodeSchema = Joi.object({
 
 const suggestionResponseSchema = Joi.object({
   suggestion_id: Joi.number().integer().required(),
-  action: Joi.string().valid("accept", "reject", "modify").required(),
+  action: Joi.string().valid('accept', 'reject', 'modify').required(),
   modified_quantity: Joi.number().integer().min(1).optional(),
-  admin_notes: Joi.string().allow("").optional(),
+  admin_notes: Joi.string().allow('').optional(),
 });
 
 // Generate unique barcode number with consistent length
@@ -37,42 +37,52 @@ function generateBarcodeNumber() {
   const timestamp = Date.now().toString();
   const random = Math.floor(Math.random() * 100000)
     .toString()
-    .padStart(5, "0");
+    .padStart(5, '0');
 
   // Ensure consistent 18-digit length
   const barcode = timestamp + random;
-  return barcode.padStart(18, "0").slice(-18); // Take last 18 digits
+  return barcode.padStart(18, '0').slice(-18); // Take last 18 digits
 }
 
 // Get all barcodes with pagination and filtering
-router.get("/", authenticateToken, async (req, res) => {
+router.get('/', authenticateToken, async (req, res) => {
   try {
     const {
       page = 1,
       limit,
-      search = "",
+      search = '',
       product_id,
-      sort_by = "created_at",
-      sort_order = "desc",
+      sort_by = 'created_at',
+      sort_order = 'desc',
+      stock_status, // 'in' | 'out' optional for faster filtering
     } = req.query;
 
     // Use pagination with the provided limit
     const limitValue = parseInt(limit) || 10;
     const offset = (parseInt(page) - 1) * limitValue;
-    let whereClause = "WHERE 1=1";
+    let whereClause = 'WHERE 1=1';
     const params = [];
 
     // Add search filter
     if (search) {
-      whereClause += " AND (b.barcode LIKE ? OR p.name LIKE ? OR p.sku LIKE ?)";
+      whereClause += ' AND (b.barcode LIKE ? OR p.name LIKE ? OR p.sku LIKE ?)';
       const searchTerm = `%${search}%`;
       params.push(searchTerm, searchTerm, searchTerm);
     }
 
     // Add product filter
     if (product_id) {
-      whereClause += " AND b.product_id = ?";
+      whereClause += ' AND b.product_id = ?';
       params.push(product_id);
+    }
+
+    // Add stock status filter (server-side for performance)
+    if (stock_status === 'in') {
+      // Units assigned > 0 OR explicitly marked stocked in
+      whereClause += ' AND (b.units_assigned > 0 OR b.is_stocked_in = 1)';
+    } else if (stock_status === 'out') {
+      // Units assigned = 0 or NULL considered stock out
+      whereClause += ' AND (b.units_assigned = 0 OR b.units_assigned IS NULL)';
     }
 
     // Build query with scan history
@@ -136,13 +146,13 @@ router.get("/", authenticateToken, async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Error fetching barcodes:", error);
-    res.status(500).json({ error: "Failed to fetch barcodes" });
+    console.error('Error fetching barcodes:', error);
+    res.status(500).json({ error: 'Failed to fetch barcodes' });
   }
 });
 
 // Get barcode by ID
-router.get("/:id", authenticateToken, async (req, res) => {
+router.get('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -174,11 +184,11 @@ router.get("/:id", authenticateToken, async (req, res) => {
       FROM barcodes b
       LEFT JOIN products p ON b.product_id = p.id
       WHERE b.id = ?`,
-      [id]
+      [id],
     );
 
     if (rows.length === 0) {
-      return res.status(404).json({ error: "Barcode not found" });
+      return res.status(404).json({ error: 'Barcode not found' });
     }
 
     res.json({
@@ -186,16 +196,16 @@ router.get("/:id", authenticateToken, async (req, res) => {
       data: rows[0],
     });
   } catch (error) {
-    console.error("Error fetching barcode:", error);
-    res.status(500).json({ error: "Failed to fetch barcode" });
+    console.error('Error fetching barcode:', error);
+    res.status(500).json({ error: 'Failed to fetch barcode' });
   }
 });
 
 // Create new barcode
 router.post(
-  "/",
+  '/',
   authenticateToken,
-  requireRole(["admin", "manager"]),
+  requireRole(['admin', 'manager']),
   async (req, res) => {
     try {
       const { error, value } = barcodeSchema.validate(req.body);
@@ -207,28 +217,28 @@ router.post(
 
       // Check if barcode already exists
       const [existingBarcodes] = await pool.execute(
-        "SELECT id FROM barcodes WHERE barcode = ?",
-        [barcode]
+        'SELECT id FROM barcodes WHERE barcode = ?',
+        [barcode],
       );
 
       if (existingBarcodes.length > 0) {
-        return res.status(400).json({ error: "Barcode already exists" });
+        return res.status(400).json({ error: 'Barcode already exists' });
       }
 
       // Check if product exists
       const [productRows] = await pool.execute(
-        "SELECT id FROM products WHERE id = ?",
-        [product_id]
+        'SELECT id FROM products WHERE id = ?',
+        [product_id],
       );
 
       if (productRows.length === 0) {
-        return res.status(400).json({ error: "Product not found" });
+        return res.status(400).json({ error: 'Product not found' });
       }
 
       // Create barcode
       const [result] = await pool.execute(
-        "INSERT INTO barcodes (product_id, barcode, units_assigned, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW())",
-        [product_id, barcode, units_assigned]
+        'INSERT INTO barcodes (product_id, barcode, units_assigned, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW())',
+        [product_id, barcode, units_assigned],
       );
 
       const barcodeId = result.insertId;
@@ -250,26 +260,26 @@ router.post(
       FROM barcodes b
       LEFT JOIN products p ON b.product_id = p.id
       WHERE b.id = ?`,
-        [barcodeId]
+        [barcodeId],
       );
 
       res.status(201).json({
         success: true,
-        message: "Barcode created successfully",
+        message: 'Barcode created successfully',
         data: newBarcode[0],
       });
     } catch (error) {
-      console.error("Error creating barcode:", error);
-      res.status(500).json({ error: "Failed to create barcode" });
+      console.error('Error creating barcode:', error);
+      res.status(500).json({ error: 'Failed to create barcode' });
     }
-  }
+  },
 );
 
 // Generate barcodes
 router.post(
-  "/generate",
+  '/generate',
   authenticateToken,
-  requireRole(["admin", "manager"]),
+  requireRole(['admin', 'manager']),
   async (req, res) => {
     try {
       const { error, value } = bulkBarcodeSchema.validate(req.body);
@@ -287,12 +297,12 @@ router.post(
 
       // Check if product exists
       const [productRows] = await pool.execute(
-        "SELECT id FROM products WHERE id = ?",
-        [product_id]
+        'SELECT id FROM products WHERE id = ?',
+        [product_id],
       );
 
       if (productRows.length === 0) {
-        return res.status(400).json({ error: "Product not found" });
+        return res.status(400).json({ error: 'Product not found' });
       }
 
       // Generate barcodes with progress tracking
@@ -322,8 +332,8 @@ router.post(
 
       // Insert barcodes in bulk
       const values = barcodes
-        .map(() => "(?, ?, ?, 0, NOW(), NOW())")
-        .join(", ");
+        .map(() => '(?, ?, ?, 0, NOW(), NOW())')
+        .join(', ');
       const params = barcodes.flatMap((b) => [
         b.product_id,
         b.barcode,
@@ -332,20 +342,20 @@ router.post(
 
       await pool.execute(
         `INSERT INTO barcodes (product_id, barcode, units_assigned, is_stocked_in, created_at, updated_at) VALUES ${values}`,
-        params
+        params,
       );
 
       // Update product stock quantity to match the sum of units_assigned for stocked-in barcodes
       const [stockedInData] = await pool.execute(
         `SELECT SUM(units_assigned) as total_units FROM barcodes WHERE product_id = ? AND is_stocked_in = 1`,
-        [product_id]
+        [product_id],
       );
 
       const totalUnits = stockedInData[0].total_units || 0;
 
       await pool.execute(
         `UPDATE products SET stock_quantity = ?, updated_at = NOW() WHERE id = ?`,
-        [totalUnits, product_id]
+        [totalUnits, product_id],
       );
 
       res.json({
@@ -357,17 +367,17 @@ router.post(
         },
       });
     } catch (error) {
-      console.error("Error generating barcodes:", error);
-      res.status(500).json({ error: "Failed to generate barcodes" });
+      console.error('Error generating barcodes:', error);
+      res.status(500).json({ error: 'Failed to generate barcodes' });
     }
-  }
+  },
 );
 
 // Update barcode
 router.put(
-  "/:id",
+  '/:id',
   authenticateToken,
-  requireRole(["admin", "manager"]),
+  requireRole(['admin', 'manager']),
   async (req, res) => {
     try {
       const { id } = req.params;
@@ -380,28 +390,28 @@ router.put(
 
       // Check if barcode exists
       const [existingBarcodes] = await pool.execute(
-        "SELECT id FROM products WHERE id = ?",
-        [id]
+        'SELECT id FROM products WHERE id = ?',
+        [id],
       );
 
       if (existingBarcodes.length === 0) {
-        return res.status(404).json({ error: "Barcode not found" });
+        return res.status(404).json({ error: 'Barcode not found' });
       }
 
       // Check if new barcode already exists (excluding current one)
       const [duplicateBarcodes] = await pool.execute(
-        "SELECT id FROM barcodes WHERE barcode = ? AND id != ?",
-        [barcode, id]
+        'SELECT id FROM barcodes WHERE barcode = ? AND id != ?',
+        [barcode, id],
       );
 
       if (duplicateBarcodes.length > 0) {
-        return res.status(400).json({ error: "Barcode already exists" });
+        return res.status(400).json({ error: 'Barcode already exists' });
       }
 
       // Update barcode
       await pool.execute(
-        "UPDATE barcodes SET product_id = ?, barcode = ?, units_assigned = ?, updated_at = NOW() WHERE id = ?",
-        [product_id, barcode, units_assigned, id]
+        'UPDATE barcodes SET product_id = ?, barcode = ?, units_assigned = ?, updated_at = NOW() WHERE id = ?',
+        [product_id, barcode, units_assigned, id],
       );
 
       // Get updated barcode with product details
@@ -421,89 +431,89 @@ router.put(
       FROM barcodes b
       LEFT JOIN products p ON b.product_id = p.id
       WHERE b.id = ?`,
-        [id]
+        [id],
       );
 
       res.json({
         success: true,
-        message: "Barcode updated successfully",
+        message: 'Barcode updated successfully',
         data: updatedBarcode[0],
       });
     } catch (error) {
-      console.error("Error updating barcode:", error);
-      res.status(500).json({ error: "Failed to update barcode" });
+      console.error('Error updating barcode:', error);
+      res.status(500).json({ error: 'Failed to update barcode' });
     }
-  }
+  },
 );
 
 // Delete barcode
 router.delete(
-  "/:id",
+  '/:id',
   authenticateToken,
-  requireRole(["admin"]),
+  requireRole(['admin']),
   async (req, res) => {
     try {
       const { id } = req.params;
 
       // Check if barcode exists
       const [existingBarcodes] = await pool.execute(
-        "SELECT id FROM barcodes WHERE id = ?",
-        [id]
+        'SELECT id FROM barcodes WHERE id = ?',
+        [id],
       );
 
       if (existingBarcodes.length === 0) {
-        return res.status(404).json({ error: "Barcode not found" });
+        return res.status(404).json({ error: 'Barcode not found' });
       }
 
       // Get product_id before deleting
       const [barcodeInfo] = await pool.execute(
-        "SELECT product_id FROM barcodes WHERE id = ?",
-        [id]
+        'SELECT product_id FROM barcodes WHERE id = ?',
+        [id],
       );
       const product_id = barcodeInfo[0].product_id;
 
       // Delete barcode
-      await pool.execute("DELETE FROM barcodes WHERE id = ?", [id]);
+      await pool.execute('DELETE FROM barcodes WHERE id = ?', [id]);
 
       // Update product stock quantity
       const [remainingBarcodes] = await pool.execute(
-        "SELECT COUNT(*) as count FROM barcodes WHERE product_id = ? AND is_stocked_in = 1",
-        [product_id]
+        'SELECT COUNT(*) as count FROM barcodes WHERE product_id = ? AND is_stocked_in = 1',
+        [product_id],
       );
 
       await pool.execute(
-        "UPDATE products SET stock_quantity = ? WHERE id = ?",
-        [remainingBarcodes[0].count, product_id]
+        'UPDATE products SET stock_quantity = ? WHERE id = ?',
+        [remainingBarcodes[0].count, product_id],
       );
 
       res.json({
         success: true,
-        message: "Barcode deleted successfully",
+        message: 'Barcode deleted successfully',
       });
     } catch (error) {
-      console.error("Error deleting barcode:", error);
-      res.status(500).json({ error: "Failed to delete barcode" });
+      console.error('Error deleting barcode:', error);
+      res.status(500).json({ error: 'Failed to delete barcode' });
     }
-  }
+  },
 );
 
 // Bulk delete barcodes
 router.delete(
-  "/",
+  '/',
   authenticateToken,
-  requireRole(["admin"]),
+  requireRole(['admin']),
   async (req, res) => {
     try {
       const { barcode_ids } = req.body;
 
       if (!Array.isArray(barcode_ids) || barcode_ids.length === 0) {
-        return res.status(400).json({ error: "Barcode IDs array is required" });
+        return res.status(400).json({ error: 'Barcode IDs array is required' });
       }
 
-      const placeholders = barcode_ids.map(() => "?").join(",");
+      const placeholders = barcode_ids.map(() => '?').join(',');
       const [result] = await pool.execute(
         `DELETE FROM barcodes WHERE id IN (${placeholders})`,
-        barcode_ids
+        barcode_ids,
       );
 
       res.json({
@@ -511,10 +521,10 @@ router.delete(
         message: `${result.affectedRows} barcodes deleted successfully`,
       });
     } catch (error) {
-      console.error("Error bulk deleting barcodes:", error);
-      res.status(500).json({ error: "Failed to delete barcodes" });
+      console.error('Error bulk deleting barcodes:', error);
+      res.status(500).json({ error: 'Failed to delete barcodes' });
     }
-  }
+  },
 );
 
 module.exports = router;

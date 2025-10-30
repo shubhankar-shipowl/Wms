@@ -746,6 +746,7 @@ const Barcodes = () => {
   const [selectedProduct, setSelectedProduct] = useState('');
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(20);
+  const [stockStatusFilter, setStockStatusFilter] = useState(''); // '', 'in', 'out'
   const [generateDialogOpen, setGenerateDialogOpen] = useState(false);
   const [selectedBarcode, setSelectedBarcode] = useState(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
@@ -764,7 +765,7 @@ const Barcodes = () => {
     isLoading,
     refetch,
   } = useQuery(
-    ['barcodes', search, selectedProduct, page, limit],
+    ['barcodes', search, selectedProduct, page, limit, stockStatusFilter],
     () => {
       return axios
         .get('/api/barcodes', {
@@ -773,6 +774,7 @@ const Barcodes = () => {
             product_id: selectedProduct,
             page,
             limit,
+            stock_status: stockStatusFilter || undefined,
           },
         })
         .then((res) => res.data);
@@ -790,6 +792,10 @@ const Barcodes = () => {
   const barcodes = barcodesData?.data?.barcodes || [];
   const pagination = barcodesData?.data?.pagination || {};
   const products = productsData?.data?.products || [];
+
+  // Apply client-side stock status filtering without backend changes
+  // With server-side filtering enabled, we can use data directly
+  const filteredBarcodes = barcodes;
 
   const deleteBarcodeMutation = useMutation(
     (barcodeId) => axios.delete(`/api/barcodes/${barcodeId}`),
@@ -839,8 +845,8 @@ const Barcodes = () => {
         products.find((p) => p.id === barcode.product_id),
       );
     } else {
-      // Print all filtered barcodes
-      setSelectedBarcodesForPrint(barcodes);
+      // Print all barcodes currently visible after filters
+      setSelectedBarcodesForPrint(filteredBarcodes);
       setSelectedProductForPrint(null);
     }
     setPrintDialogOpen(true);
@@ -890,14 +896,14 @@ const Barcodes = () => {
               Generate Barcodes
             </Button>
           )}
-          {barcodes.length > 0 && (
+          {filteredBarcodes.length > 0 && (
             <Button
               variant="outlined"
               startIcon={<Print />}
               onClick={() => handlePrintBarcodes()}
               color="primary"
             >
-              Print All ({pagination.total || barcodes.length})
+              Print All ({filteredBarcodes.length})
             </Button>
           )}
           <Button
@@ -953,6 +959,23 @@ const Barcodes = () => {
                 </Select>
               </FormControl>
             </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <FormControl fullWidth>
+                <InputLabel>Transaction Type</InputLabel>
+                <Select
+                  value={stockStatusFilter}
+                  onChange={(e) => {
+                    setStockStatusFilter(e.target.value);
+                    setPage(1);
+                  }}
+                  label="Transaction Type"
+                >
+                  <MenuItem value="">All Types</MenuItem>
+                  <MenuItem value="in">Stock IN</MenuItem>
+                  <MenuItem value="out">Stock OUT</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
             <Grid item xs={12} sm={6} md={2}>
               <FormControl fullWidth>
                 <InputLabel>Show Per Page</InputLabel>
@@ -990,7 +1013,7 @@ const Barcodes = () => {
             </TableRow>
           </TableHead>
           <TableBody>
-            {barcodes.map((barcode) => (
+            {filteredBarcodes.map((barcode) => (
               <TableRow key={barcode.id}>
                 <TableCell>
                   <Typography
