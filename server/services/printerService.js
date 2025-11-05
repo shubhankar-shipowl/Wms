@@ -120,9 +120,9 @@ class PrinterService {
             : configuredPrinterName;
         console.log(`🖨️ Using printer: ${targetPrinter}`);
 
-        // Escape the file path for PowerShell (use double quotes for paths with spaces)
-        const psPathEscaped = tempFile.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        const psPathQuoted = `"${psPathEscaped}"`;
+        // Escape the file path for PowerShell (use single quotes to avoid escaping issues)
+        const psPathEscaped = tempFile.replace(/'/g, "''");
+        const psPathQuoted = `'${psPathEscaped}'`;
         const cmdPath = tempFile.replace(/"/g, '\\"');
 
         // Try multiple Windows printing methods - using direct port writing for raw printing
@@ -130,37 +130,49 @@ class PrinterService {
         const psScriptPath = path.join(tempDir, `print_script_${Date.now()}.ps1`);
         const psScript = `
 $ErrorActionPreference = "Stop"
-$bytes = [System.IO.File]::ReadAllBytes(${psPathQuoted})
-$printer = Get-WmiObject -Query "SELECT * FROM Win32_Printer WHERE Name='${targetPrinter}'" | Select-Object -First 1
+$filePath = ${psPathQuoted}
+$printerName = '${targetPrinter}'
+Write-Host "Reading file: $filePath"
+$bytes = [System.IO.File]::ReadAllBytes($filePath)
+Write-Host "Read $($bytes.Length) bytes from file"
+$printer = Get-WmiObject -Query "SELECT * FROM Win32_Printer WHERE Name='$printerName'" | Select-Object -First 1
 if (-not $printer) {
-    throw "Printer '${targetPrinter}' not found"
+    throw "Printer '$printerName' not found"
 }
 $port = $printer.PortName
 Write-Host "Using printer port: $port"
+Write-Host "Printer status: $($printer.Status)"
 try {
     $stream = New-Object System.IO.FileStream($port, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Write)
     $stream.Write($bytes, 0, $bytes.Length)
     $stream.Flush()
     $stream.Close()
-    Write-Host "Successfully sent $($bytes.Length) bytes to printer"
+    Write-Host "Successfully sent $($bytes.Length) bytes to printer port $port"
 } catch {
-    throw "Failed to write to printer port: $_"
+    $errorMsg = $_.Exception.Message
+    Write-Host "Error details: $errorMsg"
+    throw "Failed to write to printer port '$port': $errorMsg"
 }
 `.trim();
         fs.writeFileSync(psScriptPath, psScript, 'utf8');
+        console.log(`📝 Created PowerShell script: ${psScriptPath}`);
+
+        // Escape PowerShell script path properly
+        const psScriptPathEscaped = psScriptPath.replace(/'/g, "''");
+        const psScriptPathQuoted = `'${psScriptPathEscaped}'`;
 
         // Try multiple Windows printing methods
         const commands = [
           // Method 1: PowerShell script - Write directly to printer port (most reliable for raw data)
-          `powershell -NoProfile -ExecutionPolicy Bypass -File "${psScriptPath.replace(/\\/g, '\\\\')}"`,
+          `powershell -NoProfile -ExecutionPolicy Bypass -File ${psScriptPathQuoted}`,
           
-          // Method 2: PowerShell inline - Simpler direct port write
-          `powershell -NoProfile -Command "$bytes = [System.IO.File]::ReadAllBytes(${psPathQuoted}); $printer = Get-WmiObject -Query 'SELECT * FROM Win32_Printer WHERE Name=\\'${targetPrinter}\\'' | Select-Object -First 1; if ($printer) { $port = $printer.PortName; $stream = New-Object System.IO.FileStream($port, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Write); $stream.Write($bytes, 0, $bytes.Length); $stream.Flush(); $stream.Close() } else { throw 'Printer not found' }"`,
+          // Method 2: PowerShell inline - Direct port write using WMI
+          `powershell -NoProfile -Command "$bytes = [System.IO.File]::ReadAllBytes(${psPathQuoted}); $printer = Get-WmiObject -Query 'SELECT * FROM Win32_Printer WHERE Name=''${targetPrinter}''' | Select-Object -First 1; if ($printer) { $port = $printer.PortName; Write-Host 'Writing to port: $port'; $stream = New-Object System.IO.FileStream($port, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Write); $stream.Write($bytes, 0, $bytes.Length); $stream.Flush(); $stream.Close(); Write-Host 'Sent $($bytes.Length) bytes' } else { throw 'Printer not found' }"`,
           
-          // Method 3: Use copy command to PRN port (if printer is mapped)
+          // Method 3: Use copy command to PRN port (only works if printer is mapped to PRN)
           `cmd /c copy /b "${cmdPath}" PRN`,
           
-          // Method 4: Use copy command with printer share name
+          // Method 4: Use copy command with printer share name (if printer is shared)
           `cmd /c copy /b "${cmdPath}" "\\\\localhost\\${targetPrinter}"`,
         ];
 
@@ -180,20 +192,21 @@ try {
 
             console.log(`✅ Windows print method ${i + 1} successful`);
             if (stdout && stdout.trim()) {
-              console.log(`📋 Output: ${stdout.trim().substring(0, 200)}`);
+              console.log(`📋 Output: ${stdout.trim()}`);
             }
             if (stderr && stderr.trim()) {
-              console.log(`⚠️  Stderr: ${stderr.trim().substring(0, 200)}`);
+              console.log(`⚠️  Stderr: ${stderr.trim()}`);
             }
 
-            // Verify print job was actually queued (for methods that write directly to port)
+            // For direct port writes (methods 1-2), verify the data was actually sent
             if (i < 2) {
-              try {
-                await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
-                console.log(`✅ Data sent to printer port successfully`);
-              } catch (verifyErr) {
-                console.log(`ℹ️ Could not verify (this is OK for direct port writes)`);
-              }
+              // The PowerShell script already outputs success messages
+              // If we got here, it means the script executed successfully
+              console.log(`✅ Data sent directly to printer port (bypasses print queue)`);
+            } else if (i === 2) {
+              // For copy command, verify it actually copied data
+              console.log(`⚠️  Copy command succeeded, but verify printer received data`);
+              console.log(`💡 Note: Copy to PRN only works if printer is mapped to PRN port`);
             }
 
             success = true;
