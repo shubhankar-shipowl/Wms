@@ -1,6 +1,7 @@
 const net = require('net');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const SerialPort = require('serialport');
 const { exec } = require('child_process');
 const util = require('util');
@@ -70,95 +71,225 @@ class PrinterService {
     });
   }
 
-  // Send print job via CUPS (macOS/Linux)
+  // Send print job via CUPS (macOS/Linux) or Windows Print Spooler
   async printToCUPS(content) {
     try {
-      // Create a temporary file for the print job
-      const tempFile = `/tmp/print_job_${Date.now()}.tspl`;
+      const platform = os.platform();
+      const isWindows = platform === 'win32';
+      const isMacOS = platform === 'darwin';
+      const isLinux = platform === 'linux';
+
+      // Use cross-platform temp directory
+      const tempDir = os.tmpdir();
+      const tempFile = path.join(tempDir, `print_job_${Date.now()}.tspl`);
       fs.writeFileSync(tempFile, content);
 
-      // Ensure CUPS is running
-      try {
-        await execAsync(
-          'systemctl is-active --quiet cups || systemctl start cups',
-        );
-        console.log('✅ CUPS service is running');
-      } catch (error) {
-        console.log('ℹ️ CUPS service check skipped:', error.message);
-      }
+      // Windows printing
+      if (isWindows) {
+        console.log('🪟 Detected Windows - using Windows Print Spooler');
 
-      // Create a proper virtual printer for barcode printing
-      try {
-        // Check if printer exists, if not create it
-        const { stdout } = await execAsync(
-          'lpstat -p 2>/dev/null | grep TSC_TE244 || echo "not found"',
-        );
-        if (stdout.includes('not found')) {
-          console.log('🖨️ Creating TSC_TE244 virtual printer...');
-          await execAsync(
-            'lpadmin -p TSC_TE244 -E -v file:///dev/null -m raw -D "TSC Barcode Printer" -L "WMS Barcode Printer"',
-          );
-          console.log('✅ Virtual printer TSC_TE244 created');
-        } else {
-          console.log('✅ Virtual printer TSC_TE244 already exists');
-        }
-      } catch (error) {
-        console.log('ℹ️ Virtual printer setup skipped:', error.message);
-      }
+        // Get printer name from config or use default
+        const configuredPrinterName =
+          printerConfig.windows?.printerName || 'TSC_TE244';
+        const useDefaultPrinter =
+          printerConfig.windows?.useDefaultPrinter !== false;
 
-      // Try to print with proper job tracking
-      let jobId = null;
-      const commands = [
-        `lp -d TSC_TE244 -o raw -o job-sheets=none -t "WMS Barcode Print" "${tempFile}"`,
-        `lp -d TSC_TE244 -o raw -o job-sheets=none "${tempFile}"`,
-        `lp -d TSC_TE244 -o raw "${tempFile}"`,
-        `lp -o raw -t "WMS Barcode Print" "${tempFile}"`,
-        `lp "${tempFile}"`,
-      ];
+        let defaultPrinter = null;
 
-      let success = false;
-      for (let i = 0; i < commands.length; i++) {
-        try {
-          console.log(`Trying CUPS method ${i + 1}...`);
-          const { stdout } = await execAsync(commands[i]);
-          console.log(`✅ CUPS method ${i + 1} successful`);
-
-          // Extract job ID from output (format: "request id is TSC_TE244-123 (1 file(s))")
-          const jobMatch = stdout.match(/request id is (\S+)/);
-          if (jobMatch) {
-            jobId = jobMatch[1];
-            console.log(`📋 Print job ID: ${jobId}`);
+        // Try to get default printer if enabled
+        if (useDefaultPrinter) {
+          try {
+            const { stdout: defaultPrinterOut } = await execAsync(
+              'powershell -Command "Get-Printer | Where-Object {$_.Default -eq $true} | Select-Object -ExpandProperty Name"',
+            );
+            if (defaultPrinterOut && defaultPrinterOut.trim()) {
+              defaultPrinter = defaultPrinterOut.trim();
+              console.log(`📋 Default printer found: ${defaultPrinter}`);
+            }
+          } catch (error) {
+            console.log(
+              'ℹ️ Could not get default printer, using configured name',
+            );
           }
+        }
 
-          success = true;
-          break;
-        } catch (error) {
-          console.log(`❌ CUPS method ${i + 1} failed: ${error.message}`);
-          if (i === commands.length - 1) throw error;
+        // Use default printer if available and enabled, otherwise use configured name
+        const targetPrinter =
+          useDefaultPrinter && defaultPrinter
+            ? defaultPrinter
+            : configuredPrinterName;
+        console.log(`🖨️ Using printer: ${targetPrinter}`);
+
+        // Escape the file path for PowerShell
+        const psPathEscaped = tempFile.replace(/'/g, "''");
+        const psPathQuoted = `'${psPathEscaped}'`;
+        const cmdPath = tempFile.replace(/"/g, '\\"');
+
+        // Try multiple Windows printing methods
+        const commands = [
+          // Method 1: PowerShell - Out-Printer with raw flag (most reliable)
+          `powershell -NoProfile -Command "Get-Content -Path ${psPathQuoted} -Raw -Encoding Byte | Out-Printer -Name '${targetPrinter}' -Raw"`,
+          // Method 2: PowerShell - Out-Printer to default printer with raw flag
+          `powershell -NoProfile -Command "Get-Content -Path ${psPathQuoted} -Raw -Encoding Byte | Out-Printer -Raw"`,
+          // Method 3: Use copy command to PRN
+          `cmd /c copy /b "${cmdPath}" PRN`,
+        ];
+
+        let success = false;
+        let jobId = null;
+
+        for (let i = 0; i < commands.length; i++) {
+          try {
+            console.log(`Trying Windows print method ${i + 1}...`);
+            const { stdout, stderr } = await execAsync(commands[i], {
+              timeout: 15000,
+              maxBuffer: 1024 * 1024,
+              windowsHide: true,
+            });
+
+            console.log(`✅ Windows print method ${i + 1} successful`);
+            if (stdout && stdout.trim()) {
+              console.log(`📋 Output: ${stdout.trim().substring(0, 200)}`);
+            }
+
+            success = true;
+            break;
+          } catch (error) {
+            console.log(
+              `❌ Windows print method ${i + 1} failed: ${error.message}`,
+            );
+            if (i === commands.length - 1) {
+              // List available printers for debugging
+              try {
+                const { stdout: printers } = await execAsync(
+                  'powershell -Command "Get-Printer | Select-Object Name, Default, Status | Format-Table -AutoSize"',
+                  { windowsHide: true },
+                );
+                console.log('📋 Available printers:');
+                console.log(printers);
+              } catch (listError) {
+                console.log('ℹ️ Could not list printers');
+              }
+              throw error;
+            }
+          }
+        }
+
+        // Clean up temporary file
+        if (fs.existsSync(tempFile)) {
+          fs.unlinkSync(tempFile);
+        }
+
+        if (success) {
+          console.log('✅ Printed via Windows Print Spooler');
+          return {
+            success: true,
+            method: 'cups', // Keep same method name for compatibility
+            cupsMode: true,
+            jobId: jobId,
+            message: jobId
+              ? `Print job queued with ID: ${jobId}`
+              : 'Print job queued successfully on Windows',
+          };
+        } else {
+          throw new Error(
+            'All Windows printing methods failed. Please ensure your printer is installed and accessible.',
+          );
         }
       }
+      // macOS/Linux CUPS printing
+      else {
+        console.log('🍎/🐧 Detected macOS/Linux - using CUPS');
 
-      // Clean up temporary file
-      if (fs.existsSync(tempFile)) {
-        fs.unlinkSync(tempFile);
-      }
+        // Ensure CUPS is running (Linux only, macOS CUPS runs automatically)
+        if (isLinux) {
+          try {
+            await execAsync(
+              'systemctl is-active --quiet cups || systemctl start cups',
+            );
+            console.log('✅ CUPS service is running');
+          } catch (error) {
+            console.log('ℹ️ CUPS service check skipped:', error.message);
+          }
+        } else if (isMacOS) {
+          console.log('🍎 macOS detected - CUPS runs automatically');
+        }
 
-      if (success) {
-        console.log('✅ Printed via CUPS');
-        return {
-          success: true,
-          method: 'cups',
-          cupsMode: true,
-          jobId: jobId,
-          message: jobId
-            ? `Print job queued with ID: ${jobId}`
-            : 'Print job queued successfully',
-        };
-      } else {
-        throw new Error('All CUPS printing methods failed');
+        // Create a proper virtual printer for barcode printing (Linux only)
+        if (isLinux) {
+          try {
+            // Check if printer exists, if not create it
+            const { stdout } = await execAsync(
+              'lpstat -p 2>/dev/null | grep TSC_TE244 || echo "not found"',
+            );
+            if (stdout.includes('not found')) {
+              console.log('🖨️ Creating TSC_TE244 virtual printer...');
+              await execAsync(
+                'lpadmin -p TSC_TE244 -E -v file:///dev/null -m raw -D "TSC Barcode Printer" -L "WMS Barcode Printer"',
+              );
+              console.log('✅ Virtual printer TSC_TE244 created');
+            } else {
+              console.log('✅ Virtual printer TSC_TE244 already exists');
+            }
+          } catch (error) {
+            console.log('ℹ️ Virtual printer setup skipped:', error.message);
+          }
+        }
+
+        // Try to print with proper job tracking
+        let jobId = null;
+        const commands = [
+          `lp -d TSC_TE244 -o raw -o job-sheets=none -t "WMS Barcode Print" "${tempFile}"`,
+          `lp -d TSC_TE244 -o raw -o job-sheets=none "${tempFile}"`,
+          `lp -d TSC_TE244 -o raw "${tempFile}"`,
+          `lp -o raw -t "WMS Barcode Print" "${tempFile}"`,
+          `lp "${tempFile}"`,
+        ];
+
+        let success = false;
+        for (let i = 0; i < commands.length; i++) {
+          try {
+            console.log(`Trying CUPS method ${i + 1}...`);
+            const { stdout } = await execAsync(commands[i]);
+            console.log(`✅ CUPS method ${i + 1} successful`);
+
+            // Extract job ID from output (format: "request id is TSC_TE244-123 (1 file(s))")
+            const jobMatch = stdout.match(/request id is (\S+)/);
+            if (jobMatch) {
+              jobId = jobMatch[1];
+              console.log(`📋 Print job ID: ${jobId}`);
+            }
+
+            success = true;
+            break;
+          } catch (error) {
+            console.log(`❌ CUPS method ${i + 1} failed: ${error.message}`);
+            if (i === commands.length - 1) throw error;
+          }
+        }
+
+        // Clean up temporary file
+        if (fs.existsSync(tempFile)) {
+          fs.unlinkSync(tempFile);
+        }
+
+        if (success) {
+          console.log('✅ Printed via CUPS');
+          return {
+            success: true,
+            method: 'cups',
+            cupsMode: true,
+            jobId: jobId,
+            message: jobId
+              ? `Print job queued with ID: ${jobId}`
+              : 'Print job queued successfully',
+          };
+        } else {
+          throw new Error('All CUPS printing methods failed');
+        }
       }
     } catch (error) {
-      console.error('CUPS print error:', error);
+      console.error('Print error:', error);
       throw error;
     }
   }
