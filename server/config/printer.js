@@ -28,6 +28,13 @@ module.exports = {
     timeout: 5000,
   },
 
+  // Windows printer settings
+  windows: {
+    printerName: process.env.PRINTER_NAME || null, // Set to null to auto-detect
+    useDefaultPrinter: process.env.USE_DEFAULT_PRINTER !== "false", // Use default printer if available
+    autoDetectTSC: true, // Automatically detect TSC printers
+  },
+
   // Printer-specific settings (50mm x 25mm label)
   settings: {
     width: 50, // mm

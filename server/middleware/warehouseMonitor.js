@@ -32,45 +32,70 @@ class WarehouseMonitor {
 
   async updateSystemMetrics() {
     try {
-      // Check if database connection is available
-      const connection = await pool.getConnection();
-      await connection.ping();
-      connection.release();
-
       // Get critical alerts count
-      const [alertsResult] = await pool.execute(`
-        SELECT COUNT(*) as count FROM alerts WHERE priority = 'critical' AND is_read = 0
-      `);
-      this.metrics.criticalAlerts = alertsResult[0].count;
+      try {
+        const [alertsResult] = await pool.execute(`
+          SELECT COUNT(*) as count FROM alerts WHERE priority = 'critical' AND is_read = 0
+        `);
+        this.metrics.criticalAlerts = alertsResult[0].count;
+      } catch (err) {
+        // Ignore query errors, use default value
+        this.metrics.criticalAlerts = 0;
+      }
 
       // Get low stock items count
-      const [lowStockResult] = await pool.execute(`
-        SELECT COUNT(*) as count FROM products WHERE stock_quantity <= low_stock_threshold
-      `);
-      this.metrics.lowStockItems = lowStockResult[0].count;
+      try {
+        const [lowStockResult] = await pool.execute(`
+          SELECT COUNT(*) as count FROM products WHERE stock_quantity <= low_stock_threshold
+        `);
+        this.metrics.lowStockItems = lowStockResult[0].count;
+      } catch (err) {
+        // Ignore query errors, use default value
+        this.metrics.lowStockItems = 0;
+      }
 
       // Get total counts
-      const [productsResult] = await pool.execute(
-        `SELECT COUNT(*) as count FROM products`,
-      );
-      const [barcodesResult] = await pool.execute(
-        `SELECT COUNT(*) as count FROM barcodes`,
-      );
-      const [transactionsResult] = await pool.execute(
-        `SELECT COUNT(*) as count FROM transactions`,
-      );
+      try {
+        const [productsResult] = await pool.execute(
+          `SELECT COUNT(*) as count FROM products`,
+        );
+        this.metrics.totalProducts = productsResult[0].count;
+      } catch (err) {
+        this.metrics.totalProducts = 0;
+      }
 
-      this.metrics.totalProducts = productsResult[0].count;
-      this.metrics.totalBarcodes = barcodesResult[0].count;
-      this.metrics.totalTransactions = transactionsResult[0].count;
+      try {
+        const [barcodesResult] = await pool.execute(
+          `SELECT COUNT(*) as count FROM barcodes`,
+        );
+        this.metrics.totalBarcodes = barcodesResult[0].count;
+      } catch (err) {
+        this.metrics.totalBarcodes = 0;
+      }
+
+      try {
+        const [transactionsResult] = await pool.execute(
+          `SELECT COUNT(*) as count FROM transactions`,
+        );
+        this.metrics.totalTransactions = transactionsResult[0].count;
+      } catch (err) {
+        this.metrics.totalTransactions = 0;
+      }
 
       this.metrics.lastHealthCheck = new Date().toISOString();
     } catch (error) {
-      // Only log error if it's not a connection issue to avoid spam
-      if (
-        !error.message.includes('ENETUNREACH') &&
-        !error.message.includes('ECONNREFUSED')
-      ) {
+      // Only log error if it's not a connection/timeout issue to avoid spam
+      const isConnectionError =
+        error.message &&
+        (error.message.includes('ENETUNREACH') ||
+          error.message.includes('ECONNREFUSED') ||
+          error.message.includes('ETIMEDOUT') ||
+          error.message.includes('timeout') ||
+          error.message.includes('Connection timeout') ||
+          error.code === 'ETIMEDOUT' ||
+          error.code === 'ECONNREFUSED');
+
+      if (!isConnectionError) {
         console.error('Failed to update system metrics:', error);
       }
       // Set default values when database is unavailable

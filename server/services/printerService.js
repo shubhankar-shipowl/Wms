@@ -278,37 +278,112 @@ class PrinterService {
   async printToWindowsSpooler(content, tempFile) {
     try {
       // Get printer name from config or use default
-      const configuredPrinterName =
-        printerConfig.windows?.printerName || 'TSC_TE244';
+      const configuredPrinterName = printerConfig.windows?.printerName || null;
       const useDefaultPrinter =
         printerConfig.windows?.useDefaultPrinter !== false;
+      const autoDetectTSC = printerConfig.windows?.autoDetectTSC !== false;
 
-      let defaultPrinter = null;
+      let targetPrinter = null;
+      let allPrinters = [];
 
-      // Try to get default printer if enabled
-      if (useDefaultPrinter) {
+      // Get all available printers
+      try {
+        const { stdout: printersOutput } = await execAsync(
+          'powershell -Command "Get-Printer | Select-Object Name, Default | ConvertTo-Json"',
+          { windowsHide: true, timeout: 10000 },
+        );
+        
+        if (printersOutput && printersOutput.trim()) {
+          try {
+            const printers = JSON.parse(printersOutput);
+            allPrinters = Array.isArray(printers) ? printers : [printers];
+            console.log(`📋 Found ${allPrinters.length} printer(s) available`);
+            
+            // Log all printers for debugging
+            allPrinters.forEach((printer) => {
+              console.log(`   - ${printer.Name}${printer.Default ? ' (Default)' : ''}`);
+            });
+          } catch (parseError) {
+            console.log('ℹ️ Could not parse printer list, trying alternative method');
+            // Fallback: try to parse as text
+            const lines = printersOutput.split('\n').filter(line => line.trim());
+            lines.forEach(line => {
+              if (line.includes('Name') || line.includes('Default')) {
+                console.log(`   ${line.trim()}`);
+              }
+            });
+          }
+        }
+      } catch (error) {
+        console.log('ℹ️ Could not list printers, will try configured name:', error.message);
+      }
+
+      // Strategy 1: Use configured printer name if provided
+      if (configuredPrinterName) {
+        const found = allPrinters.find(
+          (p) => p.Name && p.Name.toLowerCase() === configuredPrinterName.toLowerCase()
+        );
+        if (found) {
+          targetPrinter = found.Name;
+          console.log(`📋 Using configured printer: ${targetPrinter}`);
+        } else {
+          console.log(`⚠️ Configured printer "${configuredPrinterName}" not found`);
+        }
+      }
+
+      // Strategy 2: Use default printer if enabled
+      if (!targetPrinter && useDefaultPrinter) {
+        const defaultPrinter = allPrinters.find((p) => p.Default === true);
+        if (defaultPrinter && defaultPrinter.Name) {
+          targetPrinter = defaultPrinter.Name;
+          console.log(`📋 Using default printer: ${targetPrinter}`);
+        }
+      }
+
+      // Strategy 3: Auto-detect TSC printer if enabled
+      if (!targetPrinter && autoDetectTSC) {
+        const tscPrinter = allPrinters.find(
+          (p) => p.Name && p.Name.toLowerCase().includes('tsc')
+        );
+        if (tscPrinter && tscPrinter.Name) {
+          targetPrinter = tscPrinter.Name;
+          console.log(`📋 Auto-detected TSC printer: ${targetPrinter}`);
+        }
+      }
+
+      // Strategy 4: Use first available printer as fallback
+      if (!targetPrinter && allPrinters.length > 0) {
+        const firstPrinter = allPrinters.find((p) => p.Name);
+        if (firstPrinter && firstPrinter.Name) {
+          targetPrinter = firstPrinter.Name;
+          console.log(`📋 Using first available printer: ${targetPrinter}`);
+        }
+      }
+
+      // Final fallback: try to get default printer directly
+      if (!targetPrinter) {
         try {
           const { stdout: defaultPrinterOut } = await execAsync(
             'powershell -Command "Get-Printer | Where-Object {$_.Default -eq $true} | Select-Object -ExpandProperty Name"',
             { windowsHide: true, timeout: 5000 },
           );
           if (defaultPrinterOut && defaultPrinterOut.trim()) {
-            defaultPrinter = defaultPrinterOut.trim();
-            console.log(`📋 Default printer found: ${defaultPrinter}`);
+            targetPrinter = defaultPrinterOut.trim();
+            console.log(`📋 Using default printer (direct method): ${targetPrinter}`);
           }
         } catch (error) {
-          console.log(
-            'ℹ️ Could not get default printer, using configured name',
-          );
+          console.log('ℹ️ Could not get default printer');
         }
       }
 
-      // Use default printer if available and enabled, otherwise use configured name
-      const targetPrinter =
-        useDefaultPrinter && defaultPrinter
-          ? defaultPrinter
-          : configuredPrinterName;
-      console.log(`🖨️ Using printer: ${targetPrinter}`);
+      if (!targetPrinter) {
+        throw new Error(
+          `No printer found. Available printers: ${allPrinters.map(p => p.Name).join(', ') || 'none'}. ` +
+          `Please configure PRINTER_NAME environment variable or set a default printer in Windows.`
+        );
+      }
+
+      console.log(`🖨️ Target printer selected: ${targetPrinter}`);
 
       // Escape file paths for PowerShell
       const psPathEscaped = tempFile.replace(/\\/g, '\\\\').replace(/'/g, "''");
@@ -340,31 +415,31 @@ $bytes = [System.IO.File]::ReadAllBytes($filePath)
 Write-Host "Read $($bytes.Length) bytes from file"
 
 # Use Windows Print Spooler API to send raw data
-Add-Type -TypeDefinition @"
+# Define the Win32 API functions with correct signatures
+$signature = @"
 using System;
 using System.Runtime.InteropServices;
-using System.Text;
 
 public class RawPrint {
-    [DllImport("winspool.drv", CharSet=CharSet.Ansi, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+    [DllImport("winspool.drv", EntryPoint="OpenPrinterA", CharSet=CharSet.Ansi, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
     public static extern bool OpenPrinter([MarshalAs(UnmanagedType.LPStr)] string szPrinter, out IntPtr hPrinter, IntPtr pd);
     
-    [DllImport("winspool.drv", CharSet=CharSet.Ansi, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+    [DllImport("winspool.drv", EntryPoint="StartDocPrinterA", CharSet=CharSet.Ansi, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
     public static extern bool StartDocPrinter(IntPtr hPrinter, int level, [In, MarshalAs(UnmanagedType.LPStruct)] DOCINFOA di);
     
-    [DllImport("winspool.drv", CharSet=CharSet.Ansi, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+    [DllImport("winspool.drv", EntryPoint="StartPagePrinter", CharSet=CharSet.Ansi, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
     public static extern bool StartPagePrinter(IntPtr hPrinter);
     
-    [DllImport("winspool.drv", CharSet=CharSet.Ansi, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+    [DllImport("winspool.drv", EntryPoint="WritePrinter", CharSet=CharSet.Ansi, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
     public static extern bool WritePrinter(IntPtr hPrinter, IntPtr pBytes, int dwCount, out int dwWritten);
     
-    [DllImport("winspool.drv", CharSet=CharSet.Ansi, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+    [DllImport("winspool.drv", EntryPoint="EndPagePrinter", CharSet=CharSet.Ansi, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
     public static extern bool EndPagePrinter(IntPtr hPrinter);
     
-    [DllImport("winspool.drv", CharSet=CharSet.Ansi, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+    [DllImport("winspool.drv", EntryPoint="EndDocPrinter", CharSet=CharSet.Ansi, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
     public static extern bool EndDocPrinter(IntPtr hPrinter);
     
-    [DllImport("winspool.drv", CharSet=CharSet.Ansi, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+    [DllImport("winspool.drv", EntryPoint="ClosePrinter", CharSet=CharSet.Ansi, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
     public static extern bool ClosePrinter(IntPtr hPrinter);
 }
 
@@ -376,22 +451,32 @@ public class DOCINFOA {
 }
 "@
 
+try {
+    Add-Type -TypeDefinition $signature -ErrorAction Stop
+} catch {
+    Write-Error "Failed to load Print Spooler API: $_"
+    exit 1
+}
+
 $hPrinter = [IntPtr]::Zero
+$lastError = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+
 if ([RawPrint]::OpenPrinter($printerName, [ref]$hPrinter, [IntPtr]::Zero)) {
-    Write-Host "Printer opened successfully"
+    Write-Host "✅ Printer opened successfully: $printerName"
     $docInfo = New-Object DOCINFOA
     $docInfo.pDocName = "WMS Barcode Print"
+    $docInfo.pOutputFile = $null
     $docInfo.pDataType = "RAW"
     
     if ([RawPrint]::StartDocPrinter($hPrinter, 1, $docInfo)) {
-        Write-Host "Document started"
+        Write-Host "✅ Document started"
         if ([RawPrint]::StartPagePrinter($hPrinter)) {
-            Write-Host "Page started"
+            Write-Host "✅ Page started"
             $pBytes = [System.Runtime.InteropServices.Marshal]::AllocHGlobal($bytes.Length)
             [System.Runtime.InteropServices.Marshal]::Copy($bytes, 0, $pBytes, $bytes.Length)
             $written = 0
             if ([RawPrint]::WritePrinter($hPrinter, $pBytes, $bytes.Length, [ref]$written)) {
-                Write-Host "Wrote $written bytes to printer"
+                Write-Host "✅ Wrote $written bytes to printer (out of $($bytes.Length) total bytes)"
                 [RawPrint]::EndPagePrinter($hPrinter)
                 [RawPrint]::EndDocPrinter($hPrinter)
                 [System.Runtime.InteropServices.Marshal]::FreeHGlobal($pBytes)
@@ -400,24 +485,35 @@ if ([RawPrint]::OpenPrinter($printerName, [ref]$hPrinter, [IntPtr]::Zero)) {
                 # Generate a job ID for compatibility
                 $jobId = "$printerName-$([DateTimeOffset]::Now.ToUnixTimeMilliseconds())"
                 Write-Host "Job ID: $jobId"
+                exit 0
             } else {
+                $lastError = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
                 [RawPrint]::EndPagePrinter($hPrinter)
                 [RawPrint]::EndDocPrinter($hPrinter)
                 [System.Runtime.InteropServices.Marshal]::FreeHGlobal($pBytes)
                 [RawPrint]::ClosePrinter($hPrinter)
-                throw "Failed to write to printer"
+                Write-Error "❌ Failed to write to printer. Windows Error Code: $lastError"
+                exit 1
             }
         } else {
+            $lastError = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
             [RawPrint]::EndDocPrinter($hPrinter)
             [RawPrint]::ClosePrinter($hPrinter)
-            throw "Failed to start page"
+            Write-Error "❌ Failed to start page. Windows Error Code: $lastError"
+            exit 1
         }
     } else {
+        $lastError = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
         [RawPrint]::ClosePrinter($hPrinter)
-        throw "Failed to start document"
+        Write-Error "❌ Failed to start document. Windows Error Code: $lastError"
+        exit 1
     }
 } else {
-    throw "Failed to open printer '$printerName'"
+    $lastError = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+    Write-Error "❌ Failed to open printer '$printerName'. Windows Error Code: $lastError"
+    Write-Host "💡 Tip: Make sure the printer name is correct and the printer is online."
+    Write-Host "💡 You can check available printers with: Get-Printer | Select-Object Name"
+    exit 1
 }
 `.trim();
       fs.writeFileSync(psSpoolerScriptPath, psSpoolerScript, 'utf8');
@@ -428,55 +524,121 @@ if ([RawPrint]::OpenPrinter($printerName, [ref]$hPrinter, [IntPtr]::Zero)) {
 
       // Execute PowerShell script
       console.log(`📝 Executing Windows Print Spooler script...`);
-      const { stdout, stderr } = await execAsync(
-        `powershell -NoProfile -ExecutionPolicy Bypass -File ${psSpoolerScriptPathQuoted}`,
-        {
-          timeout: 20000,
-          maxBuffer: 1024 * 1024,
-          windowsHide: true,
-        },
-      );
+      console.log(`📄 Print file: ${tempFile}`);
+      console.log(`📄 Script file: ${psSpoolerScriptPath}`);
+      
+      try {
+        const { stdout, stderr } = await execAsync(
+          `powershell -NoProfile -ExecutionPolicy Bypass -File ${psSpoolerScriptPathQuoted}`,
+          {
+            timeout: 30000,
+            maxBuffer: 1024 * 1024,
+            windowsHide: true,
+          },
+        );
 
-      // Extract job ID from output
-      let jobId = null;
-      const jobIdMatch = stdout.match(/Job ID:\s*(\S+)/);
-      if (jobIdMatch) {
-        jobId = jobIdMatch[1];
-      }
-
-      // Clean up temporary files
-      setTimeout(() => {
-        if (fs.existsSync(tempFile)) {
-          try {
-            fs.unlinkSync(tempFile);
-          } catch (e) {
-            // Ignore
-          }
+        // Log output for debugging
+        if (stdout) {
+          console.log(`📋 PowerShell Output:`);
+          console.log(stdout);
         }
-        if (fs.existsSync(psSpoolerScriptPath)) {
-          try {
-            fs.unlinkSync(psSpoolerScriptPath);
-          } catch (e) {
-            // Ignore
-          }
+        if (stderr) {
+          console.log(`⚠️ PowerShell Warnings:`);
+          console.log(stderr);
         }
-      }, 2000);
 
-      console.log(`✅ Printed via Windows Print Spooler`);
-      if (stdout) {
-        console.log(`📋 Output: ${stdout.trim().substring(0, 300)}`);
+        // Check if the output indicates success
+        if (stdout && stdout.includes('Successfully sent')) {
+          // Extract job ID from output
+          let jobId = null;
+          const jobIdMatch = stdout.match(/Job ID:\s*(\S+)/);
+          if (jobIdMatch) {
+            jobId = jobIdMatch[1];
+          }
+
+          // Clean up temporary files
+          setTimeout(() => {
+            if (fs.existsSync(tempFile)) {
+              try {
+                fs.unlinkSync(tempFile);
+                console.log('🗑️ Cleaned up temporary print file');
+              } catch (e) {
+                // Ignore
+              }
+            }
+            if (fs.existsSync(psSpoolerScriptPath)) {
+              try {
+                fs.unlinkSync(psSpoolerScriptPath);
+                console.log('🗑️ Cleaned up PowerShell script');
+              } catch (e) {
+                // Ignore
+              }
+            }
+          }, 2000);
+
+          console.log(`✅ Printed via Windows Print Spooler`);
+          
+          return {
+            success: true,
+            method: 'cups', // Return as 'cups' for compatibility
+            cupsMode: true,
+            jobId: jobId,
+            printerName: targetPrinter,
+            message: jobId
+              ? `Print job queued with ID: ${jobId} on printer ${targetPrinter} (check Windows printer queue)`
+              : `Print job queued successfully on printer ${targetPrinter} (check Windows printer queue)`,
+          };
+        } else {
+          throw new Error(`Print job may have failed. Output: ${stdout || 'no output'}`);
+        }
+      } catch (execError) {
+        // Enhanced error handling
+        let errorMessage = 'Failed to print';
+        
+        if (execError.stderr) {
+          errorMessage += `: ${execError.stderr}`;
+        } else if (execError.stdout) {
+          // Sometimes errors are in stdout
+          if (execError.stdout.includes('Failed to open printer')) {
+            errorMessage = `Printer "${targetPrinter}" not found or not accessible. ` +
+              `Please check:\n` +
+              `1. The printer name is correct: "${targetPrinter}"\n` +
+              `2. The printer is installed and online in Windows\n` +
+              `3. The printer is set as default or you have set PRINTER_NAME environment variable\n` +
+              `4. You have permission to print to this printer`;
+          } else if (execError.stdout.includes('Failed to write')) {
+            errorMessage = `Failed to send data to printer "${targetPrinter}". ` +
+              `The printer may be offline or there may be a communication issue.`;
+          } else {
+            errorMessage += `: ${execError.stdout}`;
+          }
+        } else if (execError.message) {
+          errorMessage += `: ${execError.message}`;
+        }
+
+        console.error('❌ Windows Print Spooler error:', errorMessage);
+        console.error('Full error details:', execError);
+        
+        // Clean up on error
+        setTimeout(() => {
+          if (fs.existsSync(tempFile)) {
+            try {
+              fs.unlinkSync(tempFile);
+            } catch (e) {
+              // Ignore
+            }
+          }
+          if (fs.existsSync(psSpoolerScriptPath)) {
+            try {
+              fs.unlinkSync(psSpoolerScriptPath);
+            } catch (e) {
+              // Ignore
+            }
+          }
+        }, 1000);
+
+        throw new Error(errorMessage);
       }
-
-      return {
-        success: true,
-        method: 'cups', // Return as 'cups' for compatibility
-        cupsMode: true,
-        jobId: jobId,
-        printerName: targetPrinter,
-        message: jobId
-          ? `Print job queued with ID: ${jobId} on printer ${targetPrinter} (check Windows printer queue)`
-          : `Print job queued successfully on printer ${targetPrinter} (check Windows printer queue)`,
-      };
     } catch (error) {
       console.error('Windows Print Spooler error:', error);
       throw error;
