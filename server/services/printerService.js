@@ -382,9 +382,17 @@ try {
   }
 
   // Send print job directly to USB printer (alternative method)
+  // Note: This only works on Linux/macOS. On Windows, use CUPS/Windows Print Spooler instead.
   async printToUSBPrinterDirect(content) {
+    const platform = os.platform();
+    
+    // Skip USB direct on Windows - use Windows Print Spooler instead
+    if (platform === 'win32') {
+      throw new Error('USB direct printing not supported on Windows. Use CUPS/Windows Print Spooler instead.');
+    }
+    
     try {
-      // Try different USB device paths
+      // Try different USB device paths (Linux/macOS only)
       const possiblePaths = [
         '/dev/usb/lp0',
         '/dev/usb/lp1',
@@ -394,12 +402,16 @@ try {
         '/dev/cups/1',
       ];
 
-      for (const path of possiblePaths) {
+      for (const devicePath of possiblePaths) {
         try {
-          if (fs.existsSync(path)) {
-            fs.writeFileSync(path, content);
-            console.log(`Printed to USB printer at ${path}`);
-            return;
+          if (fs.existsSync(devicePath)) {
+            fs.writeFileSync(devicePath, content);
+            console.log(`Printed to USB printer at ${devicePath}`);
+            return {
+              success: true,
+              method: 'usb_direct',
+              message: `Printed to USB printer at ${devicePath}`,
+            };
           }
         } catch (error) {
           // Continue to next path
@@ -599,16 +611,31 @@ startxref
       case 'file':
         return await this.printToFile(content);
       case 'auto':
-        // Try USB direct first, then CUPS, then PDF
-        try {
-          return await this.printToUSBPrinterDirect(content);
-        } catch (error) {
-          console.log('USB direct failed, trying CUPS...');
+        // Platform-aware auto selection
+        const platform = os.platform();
+        const isWindows = platform === 'win32';
+        
+        if (isWindows) {
+          // On Windows, skip USB direct and go straight to Windows Print Spooler
+          console.log('🪟 Windows detected - using Windows Print Spooler');
           try {
             return await this.printToCUPS(content);
           } catch (cupsError) {
-            console.log('CUPS failed, trying PDF...');
+            console.log('Windows printing failed, trying PDF...');
             return await this.printToPDF(content);
+          }
+        } else {
+          // On Linux/macOS, try USB direct first, then CUPS
+          try {
+            return await this.printToUSBPrinterDirect(content);
+          } catch (error) {
+            console.log('USB direct failed, trying CUPS...');
+            try {
+              return await this.printToCUPS(content);
+            } catch (cupsError) {
+              console.log('CUPS failed, trying PDF...');
+              return await this.printToPDF(content);
+            }
           }
         }
       default:
