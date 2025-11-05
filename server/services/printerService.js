@@ -87,6 +87,7 @@ class PrinterService {
       // Windows printing
       if (isWindows) {
         console.log('🪟 Detected Windows - using Windows Print Spooler');
+        console.log('📝 Using direct port writing method (bypasses print queue for raw TSPL data)');
 
         // Get printer name from config or use default
         const configuredPrinterName =
@@ -128,61 +129,89 @@ class PrinterService {
         // Try multiple Windows printing methods - using direct port writing for raw printing
         // Create a PowerShell script file for more reliable execution
         const psScriptPath = path.join(tempDir, `print_script_${Date.now()}.ps1`);
+        
+        // Use simpler approach with better error handling
         const psScript = `
 $ErrorActionPreference = "Stop"
 $filePath = ${psPathQuoted}
 $printerName = '${targetPrinter}'
-Write-Host "Reading file: $filePath"
+
+Write-Host "=== Windows Raw Printing Script ==="
+Write-Host "File: $filePath"
+Write-Host "Printer: $printerName"
+
+# Read file as bytes
+if (-not (Test-Path $filePath)) {
+    throw "File not found: $filePath"
+}
 $bytes = [System.IO.File]::ReadAllBytes($filePath)
 Write-Host "Read $($bytes.Length) bytes from file"
-$printer = Get-WmiObject -Query "SELECT * FROM Win32_Printer WHERE Name='$printerName'" | Select-Object -First 1
+
+# Get printer info using WMI
+$printer = Get-WmiObject -Class Win32_Printer -Filter "Name='$printerName'" | Select-Object -First 1
 if (-not $printer) {
+    Write-Host "Printer '$printerName' not found via WMI, listing all printers..."
+    Get-WmiObject -Class Win32_Printer | Select-Object Name, PortName, Status | Format-Table
     throw "Printer '$printerName' not found"
 }
+
 $port = $printer.PortName
-Write-Host "Using printer port: $port"
+Write-Host "Found printer: $($printer.Name)"
+Write-Host "Printer port: $port"
 Write-Host "Printer status: $($printer.Status)"
+
+# Write directly to printer port
 try {
+    Write-Host "Opening printer port: $port"
     $stream = New-Object System.IO.FileStream($port, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Write)
+    Write-Host "Writing $($bytes.Length) bytes to port..."
     $stream.Write($bytes, 0, $bytes.Length)
     $stream.Flush()
     $stream.Close()
-    Write-Host "Successfully sent $($bytes.Length) bytes to printer port $port"
+    Write-Host "✅ Successfully sent $($bytes.Length) bytes to printer port $port"
 } catch {
     $errorMsg = $_.Exception.Message
-    Write-Host "Error details: $errorMsg"
+    Write-Host "❌ Error writing to port: $errorMsg"
+    Write-Host "Error type: $($_.Exception.GetType().FullName)"
     throw "Failed to write to printer port '$port': $errorMsg"
 }
 `.trim();
+        
         fs.writeFileSync(psScriptPath, psScript, 'utf8');
         console.log(`📝 Created PowerShell script: ${psScriptPath}`);
+        console.log(`📄 Script size: ${fs.statSync(psScriptPath).size} bytes`);
 
         // Escape PowerShell script path properly
         const psScriptPathEscaped = psScriptPath.replace(/'/g, "''");
         const psScriptPathQuoted = `'${psScriptPathEscaped}'`;
 
-        // Try multiple Windows printing methods
+        // Try multiple Windows printing methods - prioritize direct port access for raw TSPL data
         const commands = [
           // Method 1: PowerShell script - Write directly to printer port (most reliable for raw data)
           `powershell -NoProfile -ExecutionPolicy Bypass -File ${psScriptPathQuoted}`,
           
-          // Method 2: PowerShell inline - Direct port write using WMI
-          `powershell -NoProfile -Command "$bytes = [System.IO.File]::ReadAllBytes(${psPathQuoted}); $printer = Get-WmiObject -Query 'SELECT * FROM Win32_Printer WHERE Name=''${targetPrinter}''' | Select-Object -First 1; if ($printer) { $port = $printer.PortName; Write-Host 'Writing to port: $port'; $stream = New-Object System.IO.FileStream($port, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Write); $stream.Write($bytes, 0, $bytes.Length); $stream.Flush(); $stream.Close(); Write-Host 'Sent $($bytes.Length) bytes' } else { throw 'Printer not found' }"`,
+          // Method 2: PowerShell inline - Direct port write using WMI (simpler, no script file)
+          `powershell -NoProfile -Command "$bytes = [System.IO.File]::ReadAllBytes(${psPathQuoted}); $printer = Get-WmiObject -Class Win32_Printer -Filter \"Name='${targetPrinter}'\" | Select-Object -First 1; if ($printer) { $port = $printer.PortName; Write-Host \"Writing to port: $port\"; $stream = New-Object System.IO.FileStream($port, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Write); $stream.Write($bytes, 0, $bytes.Length); $stream.Flush(); $stream.Close(); Write-Host \"Sent $($bytes.Length) bytes\" } else { throw \"Printer '${targetPrinter}' not found\" }"`,
           
-          // Method 3: Use copy command to PRN port (only works if printer is mapped to PRN)
+          // Method 3: Use Windows print command (if available)
+          `print /D:"${targetPrinter}" "${cmdPath}"`,
+          
+          // Method 4: Use copy command to PRN port (only works if printer is mapped to PRN)
           `cmd /c copy /b "${cmdPath}" PRN`,
           
-          // Method 4: Use copy command with printer share name (if printer is shared)
+          // Method 5: Use copy command with printer share name (if printer is shared)
           `cmd /c copy /b "${cmdPath}" "\\\\localhost\\${targetPrinter}"`,
         ];
 
         let success = false;
         let jobId = null;
 
+        console.log(`📋 Will try ${commands.length} Windows printing method(s)`);
+        
         for (let i = 0; i < commands.length; i++) {
           try {
-            console.log(`Trying Windows print method ${i + 1}...`);
-            console.log(`Command preview: ${commands[i].substring(0, 100)}...`);
+            console.log(`\n🔄 Trying Windows print method ${i + 1}/${commands.length}...`);
+            console.log(`📝 Command: ${commands[i].substring(0, 150)}...`);
             
             const { stdout, stderr } = await execAsync(commands[i], {
               timeout: 20000, // 20 seconds
