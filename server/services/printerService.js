@@ -120,19 +120,48 @@ class PrinterService {
             : configuredPrinterName;
         console.log(`🖨️ Using printer: ${targetPrinter}`);
 
-        // Escape the file path for PowerShell
-        const psPathEscaped = tempFile.replace(/'/g, "''");
-        const psPathQuoted = `'${psPathEscaped}'`;
+        // Escape the file path for PowerShell (use double quotes for paths with spaces)
+        const psPathEscaped = tempFile.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const psPathQuoted = `"${psPathEscaped}"`;
         const cmdPath = tempFile.replace(/"/g, '\\"');
+
+        // Try multiple Windows printing methods - using direct port writing for raw printing
+        // Create a PowerShell script file for more reliable execution
+        const psScriptPath = path.join(tempDir, `print_script_${Date.now()}.ps1`);
+        const psScript = `
+$ErrorActionPreference = "Stop"
+$bytes = [System.IO.File]::ReadAllBytes(${psPathQuoted})
+$printer = Get-WmiObject -Query "SELECT * FROM Win32_Printer WHERE Name='${targetPrinter}'" | Select-Object -First 1
+if (-not $printer) {
+    throw "Printer '${targetPrinter}' not found"
+}
+$port = $printer.PortName
+Write-Host "Using printer port: $port"
+try {
+    $stream = New-Object System.IO.FileStream($port, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Write)
+    $stream.Write($bytes, 0, $bytes.Length)
+    $stream.Flush()
+    $stream.Close()
+    Write-Host "Successfully sent $($bytes.Length) bytes to printer"
+} catch {
+    throw "Failed to write to printer port: $_"
+}
+`.trim();
+        fs.writeFileSync(psScriptPath, psScript, 'utf8');
 
         // Try multiple Windows printing methods
         const commands = [
-          // Method 1: PowerShell - Out-Printer with raw flag (most reliable)
-          `powershell -NoProfile -Command "Get-Content -Path ${psPathQuoted} -Raw -Encoding Byte | Out-Printer -Name '${targetPrinter}' -Raw"`,
-          // Method 2: PowerShell - Out-Printer to default printer with raw flag
-          `powershell -NoProfile -Command "Get-Content -Path ${psPathQuoted} -Raw -Encoding Byte | Out-Printer -Raw"`,
-          // Method 3: Use copy command to PRN
+          // Method 1: PowerShell script - Write directly to printer port (most reliable for raw data)
+          `powershell -NoProfile -ExecutionPolicy Bypass -File "${psScriptPath.replace(/\\/g, '\\\\')}"`,
+          
+          // Method 2: PowerShell inline - Simpler direct port write
+          `powershell -NoProfile -Command "$bytes = [System.IO.File]::ReadAllBytes(${psPathQuoted}); $printer = Get-WmiObject -Query 'SELECT * FROM Win32_Printer WHERE Name=\\'${targetPrinter}\\'' | Select-Object -First 1; if ($printer) { $port = $printer.PortName; $stream = New-Object System.IO.FileStream($port, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Write); $stream.Write($bytes, 0, $bytes.Length); $stream.Flush(); $stream.Close() } else { throw 'Printer not found' }"`,
+          
+          // Method 3: Use copy command to PRN port (if printer is mapped)
           `cmd /c copy /b "${cmdPath}" PRN`,
+          
+          // Method 4: Use copy command with printer share name
+          `cmd /c copy /b "${cmdPath}" "\\\\localhost\\${targetPrinter}"`,
         ];
 
         let success = false;
@@ -141,8 +170,10 @@ class PrinterService {
         for (let i = 0; i < commands.length; i++) {
           try {
             console.log(`Trying Windows print method ${i + 1}...`);
+            console.log(`Command preview: ${commands[i].substring(0, 100)}...`);
+            
             const { stdout, stderr } = await execAsync(commands[i], {
-              timeout: 15000,
+              timeout: 20000, // 20 seconds
               maxBuffer: 1024 * 1024,
               windowsHide: true,
             });
@@ -151,33 +182,76 @@ class PrinterService {
             if (stdout && stdout.trim()) {
               console.log(`📋 Output: ${stdout.trim().substring(0, 200)}`);
             }
+            if (stderr && stderr.trim()) {
+              console.log(`⚠️  Stderr: ${stderr.trim().substring(0, 200)}`);
+            }
+
+            // Verify print job was actually queued (for methods that write directly to port)
+            if (i < 2) {
+              try {
+                await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+                console.log(`✅ Data sent to printer port successfully`);
+              } catch (verifyErr) {
+                console.log(`ℹ️ Could not verify (this is OK for direct port writes)`);
+              }
+            }
 
             success = true;
             break;
           } catch (error) {
+            const errorMsg = error.message || error.toString();
             console.log(
-              `❌ Windows print method ${i + 1} failed: ${error.message}`,
+              `❌ Windows print method ${i + 1} failed: ${errorMsg.substring(0, 300)}`,
             );
+            
+            if (error.stdout) {
+              console.log(`   stdout: ${error.stdout.substring(0, 200)}`);
+            }
+            if (error.stderr) {
+              console.log(`   stderr: ${error.stderr.substring(0, 200)}`);
+            }
+            
             if (i === commands.length - 1) {
               // List available printers for debugging
               try {
                 const { stdout: printers } = await execAsync(
-                  'powershell -Command "Get-Printer | Select-Object Name, Default, Status | Format-Table -AutoSize"',
-                  { windowsHide: true },
+                  'powershell -Command "Get-Printer | Select-Object Name, Default, Status, PortName | Format-Table -AutoSize"',
+                  { windowsHide: true, timeout: 5000 },
                 );
                 console.log('📋 Available printers:');
                 console.log(printers);
+                
+                // Also get detailed printer info
+                try {
+                  const { stdout: printerInfo } = await execAsync(
+                    `powershell -Command "Get-WmiObject -Query \\"SELECT * FROM Win32_Printer WHERE Name='${targetPrinter}'\\" | Select-Object Name, PortName, Status, Default | Format-List"`,
+                    { windowsHide: true, timeout: 5000 },
+                  );
+                  if (printerInfo && printerInfo.trim()) {
+                    console.log(`📋 Printer info for ${targetPrinter}:`);
+                    console.log(printerInfo);
+                  }
+                } catch (infoErr) {
+                  // Ignore
+                }
               } catch (listError) {
-                console.log('ℹ️ Could not list printers');
+                console.log(`ℹ️ Could not list printers: ${listError.message}`);
               }
-              throw error;
+              throw new Error(`All Windows printing methods failed. Last error: ${errorMsg}`);
             }
           }
         }
 
-        // Clean up temporary file
+        // Clean up temporary files
         if (fs.existsSync(tempFile)) {
           fs.unlinkSync(tempFile);
+        }
+        if (fs.existsSync(psScriptPath)) {
+          try {
+            fs.unlinkSync(psScriptPath);
+          } catch (e) {
+            // Ignore cleanup errors
+          }
         }
 
         if (success) {

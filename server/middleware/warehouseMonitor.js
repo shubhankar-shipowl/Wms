@@ -32,9 +32,21 @@ class WarehouseMonitor {
 
   async updateSystemMetrics() {
     try {
-      // Check if database connection is available
-      const connection = await pool.getConnection();
-      await connection.ping();
+      // Check if database connection is available with timeout
+      const connection = await Promise.race([
+        pool.getConnection(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Connection timeout')), 5000)
+        ),
+      ]);
+      
+      await Promise.race([
+        connection.ping(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Ping timeout')), 5000)
+        ),
+      ]);
+      
       connection.release();
 
       // Get critical alerts count
@@ -67,11 +79,20 @@ class WarehouseMonitor {
       this.metrics.lastHealthCheck = new Date().toISOString();
     } catch (error) {
       // Only log error if it's not a connection issue to avoid spam
-      if (
-        !error.message.includes('ENETUNREACH') &&
-        !error.message.includes('ECONNREFUSED')
-      ) {
-        console.error('Failed to update system metrics:', error);
+      const isConnectionError =
+        error.code === 'ETIMEDOUT' ||
+        error.code === 'ENETUNREACH' ||
+        error.code === 'ECONNREFUSED' ||
+        error.code === 'PROTOCOL_CONNECTION_LOST' ||
+        error.code === 'ECONNRESET' ||
+        error.message.includes('ETIMEDOUT') ||
+        error.message.includes('ENETUNREACH') ||
+        error.message.includes('ECONNREFUSED') ||
+        error.message.includes('timeout') ||
+        error.message.includes('Connection lost');
+
+      if (!isConnectionError) {
+        console.error('Failed to update system metrics:', error.message);
       }
       // Set default values when database is unavailable
       this.metrics.criticalAlerts = 0;

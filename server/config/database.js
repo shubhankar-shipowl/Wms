@@ -53,8 +53,11 @@ const pool = mysql.createPool({
   // MySQL specific settings
   charset: "utf8mb4",
   timezone: "+00:00",
-  // Connection timeout settings
-  connectTimeout: parseInt(process.env.DB_CONNECTION_TIMEOUT) || 10000, // 10 seconds
+  // Connection timeout settings - increased for Windows/network issues
+  connectTimeout: parseInt(process.env.DB_CONNECTION_TIMEOUT) || 30000, // 30 seconds (increased from 10)
+  // Additional timeout settings
+  acquireTimeout: parseInt(process.env.DB_ACQUIRE_TIMEOUT) || 60000, // 60 seconds to acquire connection from pool
+  timeout: parseInt(process.env.DB_QUERY_TIMEOUT) || 60000, // 60 seconds for query execution
   // SSL configuration - disable for now since server doesn't support it
   ssl: false,
   // Additional MySQL settings
@@ -63,6 +66,9 @@ const pool = mysql.createPool({
   debug: process.env.NODE_ENV === "development" ? false : false,
   // Pool settings
   queueLimit: 0,
+  // Enable automatic reconnection
+  enableKeepAlive: true,
+  keepAliveInitialDelay: 0,
 });
 
 // Enhanced connection monitoring for MySQL
