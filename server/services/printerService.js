@@ -121,19 +121,20 @@ class PrinterService {
             : configuredPrinterName;
         console.log(`🖨️ Using printer: ${targetPrinter}`);
 
-        // Escape the file path for PowerShell (use single quotes to avoid escaping issues)
-        const psPathEscaped = tempFile.replace(/'/g, "''");
-        const psPathQuoted = `'${psPathEscaped}'`;
+        // Escape file paths for PowerShell and CMD
+        // For PowerShell inline commands, escape backslashes and quotes properly
+        const psPathEscaped = tempFile.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const psPathQuoted = `"${psPathEscaped}"`;
         const cmdPath = tempFile.replace(/"/g, '\\"');
 
-        // Try multiple Windows printing methods - using direct port writing for raw printing
-        // Create a PowerShell script file for more reliable execution
+        // Create PowerShell script file for reliable execution
         const psScriptPath = path.join(tempDir, `print_script_${Date.now()}.ps1`);
         
-        // Use simpler approach with better error handling
+        // PowerShell script - use proper escaping for file path in script
+        const scriptFilePath = tempFile.replace(/\\/g, '\\\\').replace(/'/g, "''");
         const psScript = `
 $ErrorActionPreference = "Stop"
-$filePath = ${psPathQuoted}
+$filePath = '${scriptFilePath}'
 $printerName = '${targetPrinter}'
 
 Write-Host "=== Windows Raw Printing Script ==="
@@ -147,8 +148,8 @@ if (-not (Test-Path $filePath)) {
 $bytes = [System.IO.File]::ReadAllBytes($filePath)
 Write-Host "Read $($bytes.Length) bytes from file"
 
-# Get printer info using WMI
-$printer = Get-WmiObject -Class Win32_Printer -Filter "Name='$printerName'" | Select-Object -First 1
+# Get printer info using WMI - use proper filter syntax with escaped quotes
+$printer = Get-WmiObject -Class Win32_Printer -Filter "Name='${targetPrinter.replace(/'/g, "''")}'" | Select-Object -First 1
 if (-not $printer) {
     Write-Host "Printer '$printerName' not found via WMI, listing all printers..."
     Get-WmiObject -Class Win32_Printer | Select-Object Name, PortName, Status | Format-Table
@@ -181,26 +182,125 @@ try {
         console.log(`📝 Created PowerShell script: ${psScriptPath}`);
         console.log(`📄 Script size: ${fs.statSync(psScriptPath).size} bytes`);
 
-        // Escape PowerShell script path properly
-        const psScriptPathEscaped = psScriptPath.replace(/'/g, "''");
-        const psScriptPathQuoted = `'${psScriptPathEscaped}'`;
+        // Escape PowerShell script path for command line - use backslashes escaped properly
+        const psScriptPathEscaped = psScriptPath.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const psScriptPathQuoted = `"${psScriptPathEscaped}"`;
 
-        // Try multiple Windows printing methods - prioritize direct port access for raw TSPL data
+        // Create a PowerShell script that uses Windows Print Spooler API for raw printing
+        // This will show up in the printer queue
+        const psSpoolerScriptPath = path.join(tempDir, `print_spooler_${Date.now()}.ps1`);
+        const spoolerScriptFilePath = tempFile.replace(/\\/g, '\\\\').replace(/'/g, "''");
+        const psSpoolerScript = `
+$ErrorActionPreference = "Stop"
+$filePath = '${spoolerScriptFilePath}'
+$printerName = '${targetPrinter.replace(/'/g, "''")}'
+
+Write-Host "=== Windows Print Spooler Raw Printing ==="
+Write-Host "File: $filePath"
+Write-Host "Printer: $printerName"
+
+# Read file as bytes
+if (-not (Test-Path $filePath)) {
+    throw "File not found: $filePath"
+}
+$bytes = [System.IO.File]::ReadAllBytes($filePath)
+Write-Host "Read $($bytes.Length) bytes from file"
+
+# Use Windows Print Spooler API to send raw data
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public class RawPrint {
+    [DllImport("winspool.drv", CharSet=CharSet.Ansi, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+    public static extern bool OpenPrinter([MarshalAs(UnmanagedType.LPStr)] string szPrinter, out IntPtr hPrinter, IntPtr pd);
+    
+    [DllImport("winspool.drv", CharSet=CharSet.Ansi, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+    public static extern bool StartDocPrinter(IntPtr hPrinter, int level, [In, MarshalAs(UnmanagedType.LPStruct)] DOCINFOA di);
+    
+    [DllImport("winspool.drv", CharSet=CharSet.Ansi, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+    public static extern bool StartPagePrinter(IntPtr hPrinter);
+    
+    [DllImport("winspool.drv", CharSet=CharSet.Ansi, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+    public static extern bool WritePrinter(IntPtr hPrinter, IntPtr pBytes, int dwCount, out int dwWritten);
+    
+    [DllImport("winspool.drv", CharSet=CharSet.Ansi, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+    public static extern bool EndPagePrinter(IntPtr hPrinter);
+    
+    [DllImport("winspool.drv", CharSet=CharSet.Ansi, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+    public static extern bool EndDocPrinter(IntPtr hPrinter);
+    
+    [DllImport("winspool.drv", CharSet=CharSet.Ansi, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+    public static extern bool ClosePrinter(IntPtr hPrinter);
+}
+
+[StructLayout(LayoutKind.Sequential, CharSet=CharSet.Ansi)]
+public class DOCINFOA {
+    [MarshalAs(UnmanagedType.LPStr)] public string pDocName;
+    [MarshalAs(UnmanagedType.LPStr)] public string pOutputFile;
+    [MarshalAs(UnmanagedType.LPStr)] public string pDataType;
+}
+"@
+
+$hPrinter = [IntPtr]::Zero
+if ([RawPrint]::OpenPrinter($printerName, [ref]$hPrinter, [IntPtr]::Zero)) {
+    Write-Host "Printer opened successfully"
+    $docInfo = New-Object DOCINFOA
+    $docInfo.pDocName = "Barcode Print"
+    $docInfo.pDataType = "RAW"
+    
+    if ([RawPrint]::StartDocPrinter($hPrinter, 1, $docInfo)) {
+        Write-Host "Document started"
+        if ([RawPrint]::StartPagePrinter($hPrinter)) {
+            Write-Host "Page started"
+            $pBytes = [System.Runtime.InteropServices.Marshal]::AllocHGlobal($bytes.Length)
+            [System.Runtime.InteropServices.Marshal]::Copy($bytes, 0, $pBytes, $bytes.Length)
+            $written = 0
+            if ([RawPrint]::WritePrinter($hPrinter, $pBytes, $bytes.Length, [ref]$written)) {
+                Write-Host "Wrote $written bytes to printer"
+                [RawPrint]::EndPagePrinter($hPrinter)
+                [RawPrint]::EndDocPrinter($hPrinter)
+                [System.Runtime.InteropServices.Marshal]::FreeHGlobal($pBytes)
+                [RawPrint]::ClosePrinter($hPrinter)
+                Write-Host "✅ Successfully sent $written bytes via Print Spooler (check printer queue)"
+            } else {
+                [RawPrint]::EndPagePrinter($hPrinter)
+                [RawPrint]::EndDocPrinter($hPrinter)
+                [System.Runtime.InteropServices.Marshal]::FreeHGlobal($pBytes)
+                [RawPrint]::ClosePrinter($hPrinter)
+                throw "Failed to write to printer"
+            }
+        } else {
+            [RawPrint]::EndDocPrinter($hPrinter)
+            [RawPrint]::ClosePrinter($hPrinter)
+            throw "Failed to start page"
+        }
+    } else {
+        [RawPrint]::ClosePrinter($hPrinter)
+        throw "Failed to start document"
+    }
+} else {
+    throw "Failed to open printer '$printerName'"
+}
+`.trim();
+        fs.writeFileSync(psSpoolerScriptPath, psSpoolerScript, 'utf8');
+        const psSpoolerScriptPathEscaped = psSpoolerScriptPath.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const psSpoolerScriptPathQuoted = `"${psSpoolerScriptPathEscaped}"`;
+
+        // Try multiple Windows printing methods - prioritize Print Spooler API for queue visibility
         const commands = [
-          // Method 1: PowerShell script - Write directly to printer port (most reliable for raw data)
+          // Method 1: PowerShell script using Windows Print Spooler API (shows in queue, handles raw data)
+          `powershell -NoProfile -ExecutionPolicy Bypass -File ${psSpoolerScriptPathQuoted}`,
+          
+          // Method 2: PowerShell script - Write directly to printer port (bypasses queue, fastest)
           `powershell -NoProfile -ExecutionPolicy Bypass -File ${psScriptPathQuoted}`,
           
-          // Method 2: PowerShell inline - Direct port write using WMI (simpler, no script file)
-          `powershell -NoProfile -Command "$bytes = [System.IO.File]::ReadAllBytes(${psPathQuoted}); $printer = Get-WmiObject -Class Win32_Printer -Filter \"Name='${targetPrinter}'\" | Select-Object -First 1; if ($printer) { $port = $printer.PortName; Write-Host \"Writing to port: $port\"; $stream = New-Object System.IO.FileStream($port, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Write); $stream.Write($bytes, 0, $bytes.Length); $stream.Flush(); $stream.Close(); Write-Host \"Sent $($bytes.Length) bytes\" } else { throw \"Printer '${targetPrinter}' not found\" }"`,
+          // Method 3: PowerShell inline - Direct port write using WMI (simpler, no script file)
+          `powershell -NoProfile -Command "$bytes = [System.IO.File]::ReadAllBytes(${psPathQuoted}); $printerName = '${targetPrinter.replace(/'/g, "''")}'; $printer = Get-WmiObject -Class Win32_Printer -Filter (\"Name='\" + $printerName + \"'\") | Select-Object -First 1; if ($printer) { $port = $printer.PortName; Write-Host \"Writing to port: $port\"; $stream = New-Object System.IO.FileStream($port, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Write); $stream.Write($bytes, 0, $bytes.Length); $stream.Flush(); $stream.Close(); Write-Host \"Sent $($bytes.Length) bytes\" } else { throw \"Printer '$printerName' not found\" }"`,
           
-          // Method 3: Use Windows print command (if available)
-          `print /D:"${targetPrinter}" "${cmdPath}"`,
-          
-          // Method 4: Use copy command to PRN port (only works if printer is mapped to PRN)
-          `cmd /c copy /b "${cmdPath}" PRN`,
-          
-          // Method 5: Use copy command with printer share name (if printer is shared)
-          `cmd /c copy /b "${cmdPath}" "\\\\localhost\\${targetPrinter}"`,
+          // Method 4: Use copy command to printer port directly
+          `powershell -NoProfile -Command "$printerName = '${targetPrinter.replace(/'/g, "''")}'; $printer = Get-WmiObject -Class Win32_Printer -Filter (\"Name='\" + $printerName + \"'\") | Select-Object -First 1; if ($printer) { $port = $printer.PortName; Write-Host \"Copying to port: $port\"; Copy-Item -Path ${psPathQuoted} -Destination $port -Force; Write-Host \"Copied to $port\" } else { throw 'Printer not found' }"`,
         ];
 
         let success = false;
@@ -227,15 +327,17 @@ try {
               console.log(`⚠️  Stderr: ${stderr.trim()}`);
             }
 
-            // For direct port writes (methods 1-2), verify the data was actually sent
-            if (i < 2) {
-              // The PowerShell script already outputs success messages
-              // If we got here, it means the script executed successfully
+            // Method 1 uses Print Spooler API - will show in queue
+            if (i === 0) {
+              console.log(`✅ Data sent via Windows Print Spooler API (should appear in printer queue)`);
+              console.log(`💡 Check Windows printer queue for TSC_TE244 to see the print job`);
+            } else if (i === 1) {
+              // Method 2 is direct port write (bypasses queue)
               console.log(`✅ Data sent directly to printer port (bypasses print queue)`);
-            } else if (i === 2) {
-              // For copy command, verify it actually copied data
-              console.log(`⚠️  Copy command succeeded, but verify printer received data`);
-              console.log(`💡 Note: Copy to PRN only works if printer is mapped to PRN port`);
+              console.log(`💡 Raw TSPL data sent - printer should process it immediately`);
+            } else {
+              // Other methods are fallbacks
+              console.log(`✅ Data sent via alternative method`);
             }
 
             success = true;
@@ -291,6 +393,13 @@ try {
         if (fs.existsSync(psScriptPath)) {
           try {
             fs.unlinkSync(psScriptPath);
+          } catch (e) {
+            // Ignore cleanup errors
+          }
+        }
+        if (fs.existsSync(psSpoolerScriptPath)) {
+          try {
+            fs.unlinkSync(psSpoolerScriptPath);
           } catch (e) {
             // Ignore cleanup errors
           }
