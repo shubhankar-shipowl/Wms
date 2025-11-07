@@ -85,6 +85,31 @@ const updateProductSchema = Joi.object({
   images: Joi.array().items(Joi.string()).allow(null),
 });
 
+// Get all unique categories
+router.get('/categories', authenticateToken, async (req, res) => {
+  try {
+    const [categories] = await pool.execute(
+      `SELECT DISTINCT category 
+       FROM products 
+       WHERE category IS NOT NULL AND category != '' 
+       ORDER BY category ASC`
+    );
+
+    const categoryList = categories.map((row) => row.category);
+
+    res.json({
+      success: true,
+      data: categoryList,
+    });
+  } catch (error) {
+    console.error('Get categories error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+    });
+  }
+});
+
 // Get all products with stock information
 router.get('/', authenticateToken, async (req, res) => {
   try {
@@ -92,6 +117,7 @@ router.get('/', authenticateToken, async (req, res) => {
       page = 1,
       limit = 10,
       search = '',
+      category = '',
       sortBy = 'name',
       sortOrder = 'ASC',
     } = req.query;
@@ -121,6 +147,11 @@ router.get('/', authenticateToken, async (req, res) => {
     if (search) {
       conditions.push('(p.name LIKE ? OR p.sku LIKE ?)');
       params.push(`%${search}%`, `%${search}%`);
+    }
+
+    if (category) {
+      conditions.push('p.category = ?');
+      params.push(category);
     }
 
     if (conditions.length > 0) {
@@ -163,15 +194,22 @@ router.get('/', authenticateToken, async (req, res) => {
       SELECT COUNT(*) as total
       FROM products p
     `;
+    const countParams = [];
 
-    if (search) {
-      countQuery += ` WHERE (p.name LIKE ? OR p.sku LIKE ?)`;
+    if (search || category) {
+      const countConditions = [];
+      if (search) {
+        countConditions.push('(p.name LIKE ? OR p.sku LIKE ?)');
+        countParams.push(`%${search}%`, `%${search}%`);
+      }
+      if (category) {
+        countConditions.push('p.category = ?');
+        countParams.push(category);
+      }
+      countQuery += ` WHERE ${countConditions.join(' AND ')}`;
     }
 
-    const [countResult] = await pool.execute(
-      countQuery,
-      search ? [`%${search}%`, `%${search}%`] : [],
-    );
+    const [countResult] = await pool.execute(countQuery, countParams);
 
     const total = parseInt(countResult[0].total);
     const totalPages = Math.ceil(total / limitNum);

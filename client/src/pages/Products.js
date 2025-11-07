@@ -37,7 +37,7 @@ import {
 } from '@mui/icons-material';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import { useNavigate } from 'react-router-dom';
-import { useForm } from 'react-hook-form';
+import { useForm, Controller } from 'react-hook-form';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
@@ -451,11 +451,33 @@ const ProductCard = ({
 const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
   const [selectedImages, setSelectedImages] = useState([]);
   const [imagePreview, setImagePreview] = useState([]);
+  const [isCustomCategory, setIsCustomCategory] = useState(false);
+  const [customCategoryValue, setCustomCategoryValue] = useState('');
+  const [availableCategories, setAvailableCategories] = useState([]);
+
+  // Fetch available categories from database
+  useEffect(() => {
+    const fetchCategories = async () => {
+      try {
+        const response = await axios.get('/api/products/categories');
+        if (response.data.success) {
+          setAvailableCategories(response.data.data || []);
+        }
+      } catch (error) {
+        console.error('Error fetching categories:', error);
+      }
+    };
+
+    if (open) {
+      fetchCategories();
+    }
+  }, [open, onSuccess]);
 
   const {
     register,
     handleSubmit,
     reset,
+    control,
     formState: { errors },
   } = useForm({
     defaultValues: product || {
@@ -474,11 +496,22 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
   // Reset form when product changes
   useEffect(() => {
     if (product) {
+      const category = product.category || '';
+      const predefinedCategories = ['toys', 'kitchens', 'tools', 'home decor'];
+      const isCustom = category && 
+        !predefinedCategories.includes(category.toLowerCase()) &&
+        !availableCategories.includes(category);
+      
+      setIsCustomCategory(isCustom);
+      if (isCustom) {
+        setCustomCategoryValue(category);
+      }
+
       reset({
         name: product.name || '',
         sku: product.sku || '',
         price: product.price || '',
-        category: product.category || '',
+        category: isCustom ? 'custom' : category || '',
         unit: product.unit || 'pcs',
         status: product.status || 'active',
         product_type: product.product_type || 'domestic',
@@ -507,6 +540,8 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
       setSelectedImages([]);
     } else {
       // Reset to default values for new product
+      setIsCustomCategory(false);
+      setCustomCategoryValue('');
       reset({
         name: '',
         sku: '',
@@ -521,7 +556,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
       setImagePreview([]);
       setSelectedImages([]);
     }
-  }, [product, reset]);
+  }, [product, reset, availableCategories]);
 
   const handleImageChange = (event) => {
     const files = Array.from(event.target.files);
@@ -692,9 +727,15 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
   const onSubmit = (data) => {
     const formData = new FormData();
 
-    // Append form fields
+    // Handle category - if custom, use custom value
+    const categoryValue = data.category === 'custom' ? customCategoryValue.trim() : data.category;
+    if (categoryValue) {
+      formData.append('category', categoryValue);
+    }
+
+    // Append other form fields
     Object.keys(data).forEach((key) => {
-      if (data[key] !== undefined && data[key] !== '') {
+      if (key !== 'category' && data[key] !== undefined && data[key] !== '') {
         formData.append(key, data[key]);
       }
     });
@@ -740,6 +781,26 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
     );
 
     mutation.mutate(formData);
+  };
+
+  // Get all categories (predefined + from database)
+  const getAllCategories = () => {
+    const predefined = [
+      { value: 'toys', label: 'Toys' },
+      { value: 'kitchens', label: 'Kitchens' },
+      { value: 'tools', label: 'Tools' },
+      { value: 'home decor', label: 'Home Decor' },
+    ];
+
+    // Get custom categories from database that aren't in predefined list
+    const customCategories = availableCategories
+      .filter((cat) => {
+        const lowerCat = cat.toLowerCase();
+        return !['toys', 'kitchens', 'tools', 'home decor'].includes(lowerCat);
+      })
+      .map((cat) => ({ value: cat, label: cat }));
+
+    return [...predefined, ...customCategories];
   };
 
   return (
@@ -795,13 +856,47 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
             </Grid>
 
             <Grid item xs={12} sm={6}>
-              <TextField
-                fullWidth
-                label="Category"
-                {...register('category')}
-                error={!!errors.category}
-                helperText={errors.category?.message}
-              />
+              <FormControl fullWidth>
+                <InputLabel>Category</InputLabel>
+                <Controller
+                  name="category"
+                  control={control}
+                  render={({ field }) => (
+                    <Select
+                      {...field}
+                      label="Category"
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        field.onChange(value);
+                        setIsCustomCategory(value === 'custom');
+                        if (value !== 'custom') {
+                          setCustomCategoryValue('');
+                        }
+                      }}
+                    >
+                      {getAllCategories().map((cat) => (
+                        <MenuItem key={cat.value} value={cat.value}>
+                          {cat.label}
+                        </MenuItem>
+                      ))}
+                      <MenuItem value="custom">+ Add New Category</MenuItem>
+                    </Select>
+                  )}
+                />
+              </FormControl>
+              {isCustomCategory && (
+                <TextField
+                  fullWidth
+                  label="Custom Category"
+                  value={customCategoryValue}
+                  onChange={(e) => {
+                    setCustomCategoryValue(e.target.value);
+                  }}
+                  sx={{ mt: 2 }}
+                  error={!!errors.category}
+                  helperText={errors.category?.message || 'Enter your custom category name'}
+                />
+              )}
             </Grid>
 
             <Grid item xs={12} sm={6}>
@@ -1062,6 +1157,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
 
 const Products = () => {
   const [search, setSearch] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('');
   const [stockFilter, setStockFilter] = useState('high_to_low');
   const [skuFilter, setSkuFilter] = useState('asc');
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -1070,8 +1166,18 @@ const Products = () => {
   const queryClient = useQueryClient();
   const { canEdit, isAdmin } = useAuth();
 
+  // Fetch all available categories for the filter dropdown
+  const { data: categoriesData } = useQuery(
+    'products-categories',
+    () =>
+      axios.get('/api/products/categories').then((res) => res.data),
+    {
+      staleTime: 5 * 60 * 1000, // Cache for 5 minutes
+    },
+  );
+
   const { data: productsData, isLoading } = useQuery(
-    ['products', search, stockFilter, skuFilter],
+    ['products', search, categoryFilter, stockFilter, skuFilter],
     () => {
       const sortOrder = stockFilter === 'high_to_low' ? 'DESC' : 'ASC';
       const skuSortOrder = skuFilter === 'asc' ? 'ASC' : 'DESC';
@@ -1080,6 +1186,7 @@ const Products = () => {
         .get('/api/products', {
           params: {
             search,
+            category: categoryFilter || undefined,
             // Fetch a larger page size to avoid missing cards when scrolling
             limit: 1000,
             sortBy: skuFilter === 'none' ? 'total_stock' : 'sku',
@@ -1136,6 +1243,7 @@ const Products = () => {
     // Invalidate all product-related queries to refresh dropdowns everywhere
     queryClient.invalidateQueries('products');
     queryClient.invalidateQueries('products-filter');
+    queryClient.invalidateQueries('products-categories'); // Refresh categories list
     queryClient.invalidateQueries('barcodes');
   };
 
@@ -1233,7 +1341,7 @@ const Products = () => {
               }}
             />
           </Grid>
-          <Grid item xs={12} md={3}>
+          <Grid item xs={12} md={2}>
             <FormControl fullWidth>
               <InputLabel>Sort by Stock</InputLabel>
               <Select
@@ -1252,7 +1360,7 @@ const Products = () => {
               </Select>
             </FormControl>
           </Grid>
-          <Grid item xs={12} md={3}>
+          <Grid item xs={12} md={2}>
             <FormControl fullWidth>
               <InputLabel>Sort by SKU</InputLabel>
               <Select
@@ -1269,6 +1377,31 @@ const Products = () => {
                 <MenuItem value="none">No SKU Sort</MenuItem>
                 <MenuItem value="asc">SKU A-Z</MenuItem>
                 <MenuItem value="desc">SKU Z-A</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
+        </Grid>
+        <Grid container spacing={2} alignItems="center" sx={{ mt: 1 }}>
+          <Grid item xs={12} sm={6} md={3}>
+            <FormControl fullWidth>
+              <InputLabel>Filter by Category</InputLabel>
+              <Select
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+                label="Filter by Category"
+                sx={{
+                  '& .MuiOutlinedInput-root': {
+                    borderRadius: 2,
+                    backgroundColor: 'background.paper',
+                  },
+                }}
+              >
+                <MenuItem value="">All Categories</MenuItem>
+                {categoriesData?.data?.map((cat) => (
+                  <MenuItem key={cat} value={cat}>
+                    {cat}
+                  </MenuItem>
+                ))}
               </Select>
             </FormControl>
           </Grid>
@@ -1302,11 +1435,11 @@ const Products = () => {
       {products.length === 0 && (
         <Box sx={{ textAlign: 'center', py: 8 }}>
           <Typography variant="h6" color="text.secondary">
-            {search
-              ? 'No products found matching your search'
+            {search || categoryFilter
+              ? 'No products found matching your filters'
               : 'No products available'}
           </Typography>
-          {canEdit && !search && (
+          {canEdit && !search && !categoryFilter && (
             <Button
               variant="contained"
               startIcon={<Add />}

@@ -1,7 +1,6 @@
 const net = require('net');
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const SerialPort = require('serialport');
 const { exec } = require('child_process');
 const util = require('util');
@@ -74,105 +73,46 @@ class PrinterService {
   // Send print job via CUPS (macOS/Linux)
   async printToCUPS(content) {
     try {
-      const platform = os.platform();
-      const isMacOS = platform === 'darwin';
-      const isLinux = platform === 'linux';
-      
-      // Use cross-platform temp directory
-      const tempDir = os.tmpdir();
-      const tempFile = path.join(tempDir, `print_job_${Date.now()}.tspl`);
+      // Create a temporary file for the print job
+      const tempFile = `/tmp/print_job_${Date.now()}.tspl`;
       fs.writeFileSync(tempFile, content);
-      console.log(`📄 Created temporary print file: ${tempFile}`);
 
-      // Platform-specific CUPS setup
-      if (isLinux) {
-        // Ensure CUPS is running on Linux
-        try {
-          await execAsync(
-            'systemctl is-active --quiet cups || systemctl start cups',
-          );
-          console.log('✅ CUPS service is running');
-        } catch (error) {
-          console.log('ℹ️ CUPS service check skipped:', error.message);
-        }
-      } else if (isMacOS) {
-        console.log('🍎 macOS detected - CUPS runs automatically');
-        // Check if CUPS is accessible
-        try {
-          await execAsync('lpstat -r');
-          console.log('✅ CUPS is accessible');
-        } catch (error) {
-          console.log('⚠️ CUPS may not be running:', error.message);
-        }
+      // Ensure CUPS is running
+      try {
+        await execAsync(
+          'systemctl is-active --quiet cups || systemctl start cups',
+        );
+        console.log('✅ CUPS service is running');
+      } catch (error) {
+        console.log('ℹ️ CUPS service check skipped:', error.message);
       }
 
-      // Find the actual printer to use
-      let printerName = null;
-      const configuredPrinterName = printerConfig.windows?.printerName || 'TSC_TE244';
-      
+      // Create a proper virtual printer for barcode printing
       try {
-        // Try to get default printer first
-        const { stdout: defaultPrinter } = await execAsync('lpstat -d 2>/dev/null || echo ""');
-        if (defaultPrinter && defaultPrinter.trim()) {
-          const match = defaultPrinter.match(/system default destination: (.+)/);
-          if (match && match[1]) {
-            printerName = match[1].trim();
-            console.log(`📋 Default printer found: ${printerName}`);
-          }
-        }
-        
-        // If no default or configured printer not found, try to find TSC_TE244 or configured name
-        if (!printerName || printerName !== configuredPrinterName) {
-          try {
-            const { stdout: printers } = await execAsync('lpstat -p 2>/dev/null || echo ""');
-            if (printers && printers.includes(configuredPrinterName)) {
-              printerName = configuredPrinterName;
-              console.log(`📋 Found configured printer: ${printerName}`);
-            } else if (printers) {
-              // List available printers
-              const printerLines = printers.split('\n').filter(line => line.includes('printer'));
-              if (printerLines.length > 0) {
-                console.log('📋 Available printers:');
-                printerLines.forEach(line => {
-                  const match = line.match(/printer (\S+)/);
-                  if (match) console.log(`   - ${match[1]}`);
-                });
-                // Use first available printer if no default
-                if (!printerName && printerLines.length > 0) {
-                  const firstMatch = printerLines[0].match(/printer (\S+)/);
-                  if (firstMatch) {
-                    printerName = firstMatch[1];
-                    console.log(`📋 Using first available printer: ${printerName}`);
-                  }
-                }
-              }
-            }
-          } catch (error) {
-            console.log('ℹ️ Could not list printers:', error.message);
-          }
+        // Check if printer exists, if not create it
+        const { stdout } = await execAsync(
+          'lpstat -p 2>/dev/null | grep TSC_TE244 || echo "not found"',
+        );
+        if (stdout.includes('not found')) {
+          console.log('🖨️ Creating TSC_TE244 virtual printer...');
+          await execAsync(
+            'lpadmin -p TSC_TE244 -E -v file:///dev/null -m raw -D "TSC Barcode Printer" -L "WMS Barcode Printer"',
+          );
+          console.log('✅ Virtual printer TSC_TE244 created');
+        } else {
+          console.log('✅ Virtual printer TSC_TE244 already exists');
         }
       } catch (error) {
-        console.log('ℹ️ Could not get default printer:', error.message);
+        console.log('ℹ️ Virtual printer setup skipped:', error.message);
       }
 
-      // Use configured name as fallback
-      if (!printerName) {
-        printerName = configuredPrinterName;
-        console.log(`📋 Using configured printer name: ${printerName}`);
-      }
-
-      console.log(`🖨️ Using printer: ${printerName}`);
-
-      // Try to print with proper job tracking - use actual printer name
+      // Try to print with proper job tracking
       let jobId = null;
       const commands = [
-        `lp -d "${printerName}" -o raw -o job-sheets=none -t "WMS Barcode Print" "${tempFile}"`,
-        `lp -d "${printerName}" -o raw -o job-sheets=none "${tempFile}"`,
-        `lp -d "${printerName}" -o raw "${tempFile}"`,
-        `lp -d "${printerName}" "${tempFile}"`,
-        // Fallback to default printer
-        `lp -o raw -o job-sheets=none -t "WMS Barcode Print" "${tempFile}"`,
-        `lp -o raw "${tempFile}"`,
+        `lp -d TSC_TE244 -o raw -o job-sheets=none -t "WMS Barcode Print" "${tempFile}"`,
+        `lp -d TSC_TE244 -o raw -o job-sheets=none "${tempFile}"`,
+        `lp -d TSC_TE244 -o raw "${tempFile}"`,
+        `lp -o raw -t "WMS Barcode Print" "${tempFile}"`,
         `lp "${tempFile}"`,
       ];
 
@@ -180,71 +120,28 @@ class PrinterService {
       for (let i = 0; i < commands.length; i++) {
         try {
           console.log(`Trying CUPS method ${i + 1}...`);
-          const { stdout, stderr } = await execAsync(commands[i], {
-            timeout: 15000,
-            maxBuffer: 1024 * 1024,
-          });
+          const { stdout } = await execAsync(commands[i]);
           console.log(`✅ CUPS method ${i + 1} successful`);
-          
-          if (stdout) {
-            console.log(`📋 Output: ${stdout.trim()}`);
-          }
 
-          // Extract job ID from output (format: "request id is PrinterName-123 (1 file(s))")
+          // Extract job ID from output (format: "request id is TSC_TE244-123 (1 file(s))")
           const jobMatch = stdout.match(/request id is (\S+)/);
           if (jobMatch) {
             jobId = jobMatch[1];
             console.log(`📋 Print job ID: ${jobId}`);
           }
 
-          // Verify job is in queue
-          if (jobId) {
-            try {
-              await new Promise(resolve => setTimeout(resolve, 500)); // Wait a bit
-              const { stdout: queueCheck } = await execAsync(`lpq -P "${printerName}" 2>/dev/null || lpstat -o "${printerName}" 2>/dev/null || echo ""`);
-              if (queueCheck && queueCheck.trim()) {
-                console.log(`✅ Print job verified in queue`);
-                console.log(`📋 Queue status: ${queueCheck.trim().substring(0, 200)}`);
-              }
-            } catch (queueError) {
-              console.log('ℹ️ Could not verify queue (this is OK)');
-            }
-          }
-
           success = true;
           break;
         } catch (error) {
           console.log(`❌ CUPS method ${i + 1} failed: ${error.message}`);
-          if (error.stderr) {
-            console.log(`   Stderr: ${error.stderr.substring(0, 200)}`);
-          }
-          if (i === commands.length - 1) {
-            // List available printers for debugging
-            try {
-              const { stdout: allPrinters } = await execAsync('lpstat -p 2>/dev/null || echo ""');
-              if (allPrinters) {
-                console.log('📋 All available printers:');
-                console.log(allPrinters);
-              }
-            } catch (listError) {
-              console.log('ℹ️ Could not list printers for debugging');
-            }
-            throw error;
-          }
+          if (i === commands.length - 1) throw error;
         }
       }
 
-      // Clean up temporary file (after a delay to ensure print job is queued)
-      setTimeout(() => {
-        if (fs.existsSync(tempFile)) {
-          try {
-            fs.unlinkSync(tempFile);
-            console.log('🗑️ Cleaned up temporary file');
-          } catch (e) {
-            // Ignore cleanup errors
-          }
-        }
-      }, 2000);
+      // Clean up temporary file
+      if (fs.existsSync(tempFile)) {
+        fs.unlinkSync(tempFile);
+      }
 
       if (success) {
         console.log('✅ Printed via CUPS');
@@ -253,10 +150,9 @@ class PrinterService {
           method: 'cups',
           cupsMode: true,
           jobId: jobId,
-          printerName: printerName,
           message: jobId
-            ? `Print job queued with ID: ${jobId} on printer ${printerName}`
-            : `Print job queued successfully on printer ${printerName}`,
+            ? `Print job queued with ID: ${jobId}`
+            : 'Print job queued successfully',
         };
       } else {
         throw new Error('All CUPS printing methods failed');
