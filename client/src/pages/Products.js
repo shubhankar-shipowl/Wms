@@ -757,13 +757,14 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
           })
           .filter(Boolean);
 
-        // Send existing image IDs as JSON string
-        if (existingImageIds.length > 0) {
-          formData.append('images', JSON.stringify(existingImageIds));
-        }
+        // Use a different field name to avoid conflict with multer file processing
+        formData.append('existingImageIds', JSON.stringify(existingImageIds));
+      } else {
+        // No existing images, send empty array
+        formData.append('existingImageIds', JSON.stringify([]));
       }
     } else if (selectedImages.length > 0) {
-      // If new images are selected, send them
+      // If new images are selected, send them as files (multer will process these)
       selectedImages.forEach((image, index) => {
         formData.append('images', image);
       });

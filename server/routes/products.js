@@ -581,6 +581,24 @@ router.put(
     let connection;
     try {
       const { id } = req.params;
+      
+      // Handle existing image IDs from a separate field to avoid conflict with multer
+      // Remove it from body before validation since it's not part of the schema
+      let existingImageIds = null;
+      if (req.body.existingImageIds) {
+        try {
+          existingImageIds = typeof req.body.existingImageIds === 'string' 
+            ? JSON.parse(req.body.existingImageIds)
+            : req.body.existingImageIds;
+        } catch (parseError) {
+          existingImageIds = [];
+        }
+        delete req.body.existingImageIds; // Remove from body before validation
+      }
+      
+      // Remove images from body if it exists (will be handled separately)
+      delete req.body.images;
+      
       const { error } = updateProductSchema.validate(req.body);
 
       if (error) {
@@ -635,25 +653,13 @@ router.put(
           const oldImageIds = JSON.parse(currentProduct.images);
           await cleanupOldImages(oldImageIds);
         }
-      } else if (req.body.images) {
-        // If image IDs are provided in request body (for keeping existing images)
-        let imagesData = req.body.images;
-
-        // Handle both JSON string and array formats
-        if (typeof imagesData === 'string') {
-          try {
-            imagesData = JSON.parse(imagesData);
-          } catch (error) {
-            console.error('Error parsing images JSON:', error);
-            imagesData = [];
-          }
-        }
-
-        imageIds = Array.isArray(imagesData)
-          ? imagesData.map((id) => parseInt(id))
-          : [parseInt(imagesData)];
+      } else if (existingImageIds !== null) {
+        // If existing image IDs are provided (for keeping existing images)
+        imageIds = Array.isArray(existingImageIds)
+          ? existingImageIds.map((imgId) => parseInt(imgId)).filter((id) => !isNaN(id))
+          : [];
       } else {
-        // Keep existing images if no new ones provided
+        // Keep existing images if no new ones provided and no explicit IDs sent
         const currentProduct = existingProduct[0];
         if (currentProduct.images) {
           imageIds = JSON.parse(currentProduct.images);
