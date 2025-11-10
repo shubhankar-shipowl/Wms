@@ -23,6 +23,7 @@ const schemas = {
       "number.max": "GST rate must not exceed 100%",
       "any.required": "GST rate is required",
     }),
+    rack: Joi.string().max(50).allow(""),
   }),
 
   // Barcode validation

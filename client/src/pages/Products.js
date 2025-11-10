@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Box,
   Typography,
@@ -20,6 +20,7 @@ import {
   InputAdornment,
   Select,
   MenuItem,
+  Fab,
 } from '@mui/material';
 import {
   Add,
@@ -323,14 +324,36 @@ const ProductCard = ({
             {product.name}
           </Typography>
 
-          {/* SKU */}
-          <Typography
-            variant="body2"
-            color="text.secondary"
-            sx={{ mb: 0.5, fontFamily: 'monospace', fontSize: '0.75rem' }}
+          {/* SKU and Rack */}
+          <Box
+            sx={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              mb: 0.5,
+            }}
           >
-            SKU: {product.sku}
-          </Typography>
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}
+            >
+              SKU: {product.sku}
+            </Typography>
+            {product.rack && (
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                sx={{
+                  fontSize: '0.75rem',
+                  fontFamily: 'monospace',
+                  fontWeight: 500,
+                }}
+              >
+                Rack: {product.rack}
+              </Typography>
+            )}
+          </Box>
 
           {/* Price */}
           <Typography
@@ -490,6 +513,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
       product_type: 'domestic',
       hsn_code: '',
       gst_rate: '',
+      rack: '',
     },
   });
 
@@ -498,10 +522,11 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
     if (product) {
       const category = product.category || '';
       const predefinedCategories = ['toys', 'kitchens', 'tools', 'home decor'];
-      const isCustom = category && 
+      const isCustom =
+        category &&
         !predefinedCategories.includes(category.toLowerCase()) &&
         !availableCategories.includes(category);
-      
+
       setIsCustomCategory(isCustom);
       if (isCustom) {
         setCustomCategoryValue(category);
@@ -517,6 +542,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
         product_type: product.product_type || 'domestic',
         hsn_code: product.hsn_code || '',
         gst_rate: product.gst_rate || '',
+        rack: product.rack || '',
       });
 
       // Handle existing images
@@ -552,6 +578,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
         product_type: 'domestic',
         hsn_code: '',
         gst_rate: '',
+        rack: '',
       });
       setImagePreview([]);
       setSelectedImages([]);
@@ -728,7 +755,8 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
     const formData = new FormData();
 
     // Handle category - if custom, use custom value
-    const categoryValue = data.category === 'custom' ? customCategoryValue.trim() : data.category;
+    const categoryValue =
+      data.category === 'custom' ? customCategoryValue.trim() : data.category;
     if (categoryValue) {
       formData.append('category', categoryValue);
     }
@@ -895,7 +923,10 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
                   }}
                   sx={{ mt: 2 }}
                   error={!!errors.category}
-                  helperText={errors.category?.message || 'Enter your custom category name'}
+                  helperText={
+                    errors.category?.message ||
+                    'Enter your custom category name'
+                  }
                 />
               )}
             </Grid>
@@ -991,6 +1022,19 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
                   {errors.gst_rate.message}
                 </Typography>
               )}
+            </Grid>
+
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Rack"
+                {...register('rack')}
+                error={!!errors.rack}
+                helperText={
+                  errors.rack?.message || 'Optional: Enter the rack location'
+                }
+                placeholder="e.g., A1-01, B1-01"
+              />
             </Grid>
 
             {/* Image Upload Section */}
@@ -1163,6 +1207,10 @@ const Products = () => {
   const [skuFilter, setSkuFilter] = useState('asc');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
+  const [showScrollUp, setShowScrollUp] = useState(false);
+  const [showScrollDown, setShowScrollDown] = useState(false);
+  const scrollContainerRef = useRef(null);
+  const filterSectionRef = useRef(null);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { canEdit, isAdmin } = useAuth();
@@ -1170,8 +1218,7 @@ const Products = () => {
   // Fetch all available categories for the filter dropdown
   const { data: categoriesData } = useQuery(
     'products-categories',
-    () =>
-      axios.get('/api/products/categories').then((res) => res.data),
+    () => axios.get('/api/products/categories').then((res) => res.data),
     {
       staleTime: 5 * 60 * 1000, // Cache for 5 minutes
     },
@@ -1248,6 +1295,54 @@ const Products = () => {
     queryClient.invalidateQueries('barcodes');
   };
 
+  // Scroll handling - check if scrolling is possible
+  const checkScrollPosition = () => {
+    const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+    const scrollHeight = document.documentElement.scrollHeight;
+    const clientHeight = window.innerHeight;
+
+    // Show scroll up button if scrolled down more than 100px
+    setShowScrollUp(scrollTop > 100);
+
+    // Show scroll down button if not at bottom (with 50px threshold)
+    setShowScrollDown(scrollTop + clientHeight < scrollHeight - 50);
+  };
+
+  useEffect(() => {
+    // Check scroll position on mount and when products change
+    const timer = setTimeout(() => {
+      checkScrollPosition();
+    }, 100);
+
+    // Add scroll event listener
+    const handleScroll = () => {
+      checkScrollPosition();
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    window.addEventListener('resize', handleScroll, { passive: true });
+
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('scroll', handleScroll);
+      window.removeEventListener('resize', handleScroll);
+    };
+  }, [productsData]);
+
+  const scrollToTop = () => {
+    window.scrollTo({
+      top: 0,
+      behavior: 'smooth',
+    });
+  };
+
+  const scrollToBottom = () => {
+    window.scrollTo({
+      top: document.documentElement.scrollHeight,
+      behavior: 'smooth',
+    });
+  };
+
   if (isLoading) {
     return <LoadingSpinner message="Loading products..." />;
   }
@@ -1255,7 +1350,7 @@ const Products = () => {
   const products = productsData?.data?.products || [];
 
   return (
-    <Box>
+    <Box ref={scrollContainerRef}>
       <Box
         sx={{
           display: 'flex',
@@ -1309,7 +1404,7 @@ const Products = () => {
       </Box>
 
       {/* Search and Filter */}
-      <Box sx={{ mb: 4 }}>
+      <Box ref={filterSectionRef} sx={{ mb: 4, position: 'relative' }}>
         <Grid container spacing={2} alignItems="center">
           <Grid item xs={12} md={8}>
             <TextField
@@ -1407,6 +1502,55 @@ const Products = () => {
             </FormControl>
           </Grid>
         </Grid>
+
+        {/* Scroll Up Arrow Button - positioned below filters */}
+        <Fab
+          aria-label="scroll up"
+          onClick={scrollToTop}
+          disabled={!showScrollUp}
+          sx={{
+            position: 'fixed',
+            top: { xs: 110, sm: 120, md: 240 },
+            right: 24,
+            zIndex: 1000,
+            width: 48,
+            height: 48,
+            background: showScrollUp
+              ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
+              : 'linear-gradient(135deg, rgba(102, 126, 234, 0.4) 0%, rgba(118, 75, 162, 0.4) 100%)',
+            color: showScrollUp ? 'white' : 'rgba(255, 255, 255, 0.7)',
+            boxShadow: showScrollUp
+              ? '0 8px 20px rgba(102, 126, 234, 0.4), 0 4px 8px rgba(0, 0, 0, 0.1)'
+              : '0 4px 12px rgba(102, 126, 234, 0.2), 0 2px 4px rgba(0, 0, 0, 0.1)',
+            opacity: 1,
+            cursor: showScrollUp ? 'pointer' : 'not-allowed',
+            '&:hover': {
+              background: showScrollUp
+                ? 'linear-gradient(135deg, #764ba2 0%, #667eea 100%)'
+                : 'linear-gradient(135deg, rgba(102, 126, 234, 0.4) 0%, rgba(118, 75, 162, 0.4) 100%)',
+              boxShadow: showScrollUp
+                ? '0 12px 28px rgba(102, 126, 234, 0.5), 0 6px 12px rgba(0, 0, 0, 0.15)'
+                : '0 4px 12px rgba(102, 126, 234, 0.2), 0 2px 4px rgba(0, 0, 0, 0.1)',
+              transform: showScrollUp ? 'translateY(-3px) scale(1.05)' : 'none',
+            },
+            '&:active': {
+              transform: showScrollUp ? 'translateY(-1px) scale(0.98)' : 'none',
+            },
+            '&.Mui-disabled': {
+              background:
+                'linear-gradient(135deg, rgba(102, 126, 234, 0.4) 0%, rgba(118, 75, 162, 0.4) 100%)',
+              color: 'rgba(255, 255, 255, 0.7)',
+              opacity: 1,
+            },
+            transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+            '& svg': {
+              fontSize: 28,
+              fontWeight: 'bold',
+            },
+          }}
+        >
+          <KeyboardArrowUp />
+        </Fab>
       </Box>
 
       {/* Products Grid */}
@@ -1460,6 +1604,55 @@ const Products = () => {
         product={selectedProduct}
         onSuccess={handleDialogSuccess}
       />
+
+      {/* Scroll Down Arrow Button */}
+      <Fab
+        aria-label="scroll down"
+        onClick={scrollToBottom}
+        disabled={!showScrollDown}
+        sx={{
+          position: 'fixed',
+          bottom: 24,
+          right: 24,
+          zIndex: 1000,
+          width: 48,
+          height: 48,
+          background: showScrollDown
+            ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
+            : 'linear-gradient(135deg, rgba(102, 126, 234, 0.4) 0%, rgba(118, 75, 162, 0.4) 100%)',
+          color: showScrollDown ? 'white' : 'rgba(255, 255, 255, 0.7)',
+          boxShadow: showScrollDown
+            ? '0 8px 20px rgba(102, 126, 234, 0.4), 0 4px 8px rgba(0, 0, 0, 0.1)'
+            : '0 4px 12px rgba(102, 126, 234, 0.2), 0 2px 4px rgba(0, 0, 0, 0.1)',
+          opacity: 1, // Always visible
+          cursor: showScrollDown ? 'pointer' : 'not-allowed',
+          '&:hover': {
+            background: showScrollDown
+              ? 'linear-gradient(135deg, #764ba2 0%, #667eea 100%)'
+              : 'linear-gradient(135deg, rgba(102, 126, 234, 0.4) 0%, rgba(118, 75, 162, 0.4) 100%)',
+            boxShadow: showScrollDown
+              ? '0 12px 28px rgba(102, 126, 234, 0.5), 0 6px 12px rgba(0, 0, 0, 0.15)'
+              : '0 4px 12px rgba(102, 126, 234, 0.2), 0 2px 4px rgba(0, 0, 0, 0.1)',
+            transform: showScrollDown ? 'translateY(-3px) scale(1.05)' : 'none',
+          },
+          '&:active': {
+            transform: showScrollDown ? 'translateY(-1px) scale(0.98)' : 'none',
+          },
+          '&.Mui-disabled': {
+            background:
+              'linear-gradient(135deg, rgba(102, 126, 234, 0.4) 0%, rgba(118, 75, 162, 0.4) 100%)',
+            color: 'rgba(255, 255, 255, 0.7)',
+            opacity: 1, // Keep it visible
+          },
+          transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+          '& svg': {
+            fontSize: 28,
+            fontWeight: 'bold',
+          },
+        }}
+      >
+        <KeyboardArrowDown />
+      </Fab>
     </Box>
   );
 };

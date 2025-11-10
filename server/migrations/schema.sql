@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS products (
     low_stock_threshold INTEGER DEFAULT 10,
     hsn_code VARCHAR(50),
     gst_rate DECIMAL(5, 2) DEFAULT 0,
+    rack VARCHAR(50),
     origin VARCHAR(255),
     description TEXT,
     images TEXT[], -- Array to store image paths

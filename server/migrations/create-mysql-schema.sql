@@ -35,12 +35,19 @@ CREATE TABLE IF NOT EXISTS products (
     stock_quantity INT DEFAULT 0,
     unit VARCHAR(50) DEFAULT 'pcs',
     status ENUM('active', 'inactive', 'discontinued') DEFAULT 'active',
+    product_type ENUM('domestic', 'international') DEFAULT 'domestic',
+    hsn_code VARCHAR(20),
+    gst_rate DECIMAL(5, 2) DEFAULT 0.00,
+    rack VARCHAR(50) DEFAULT NULL,
+    images JSON DEFAULT NULL,
+    low_stock_threshold INT DEFAULT 10,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_sku (sku),
     INDEX idx_name (name),
     INDEX idx_category (category),
-    INDEX idx_status (status)
+    INDEX idx_status (status),
+    INDEX idx_product_type (product_type)
 );
 
 -- Barcodes table

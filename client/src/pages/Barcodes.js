@@ -27,6 +27,7 @@ import {
   Alert,
   LinearProgress,
   Pagination,
+  Autocomplete,
 } from '@mui/material';
 import {
   Search,
@@ -57,14 +58,15 @@ const BarcodeGenerationDialog = ({
   const queryClient = useQueryClient();
 
   // Get products for selection - refetch when dialog opens
+  // Fetch all products without pagination for dropdown
   const {
     data: productsData,
     isLoading: productsLoading,
     error: productsError,
     refetch,
   } = useQuery(
-    'products',
-    () => axios.get('/api/products?limit=1000').then((res) => res.data),
+    'products-for-barcode-generation',
+    () => axios.get('/api/products?all=true').then((res) => res.data),
     {
       enabled: open, // Only fetch when dialog is open
       staleTime: 0, // Always consider data stale
@@ -78,6 +80,7 @@ const BarcodeGenerationDialog = ({
   useEffect(() => {
     if (open) {
       refetch();
+      setSelectedProduct(null); // Reset selected product
     }
   }, [open, refetch]);
 
@@ -168,37 +171,64 @@ const BarcodeGenerationDialog = ({
       <DialogTitle>Generate Barcodes</DialogTitle>
       <DialogContent>
         <Box sx={{ mt: 2 }}>
-          <FormControl fullWidth>
-            <InputLabel>Select Product</InputLabel>
-            <Select
-              value={selectedProduct ? selectedProduct.id : ''}
-              onChange={(e) => {
-                const product = products.find((p) => p.id === e.target.value);
-                setSelectedProduct(product || null);
-              }}
-              label="Select Product"
-              disabled={productsLoading}
-            >
-              {productsLoading ? (
-                <MenuItem disabled>Loading products...</MenuItem>
-              ) : productsError ? (
-                <MenuItem disabled>Error loading products</MenuItem>
-              ) : products.length === 0 ? (
-                <MenuItem disabled>No products found</MenuItem>
-              ) : (
-                products.map((product) => (
-                  <MenuItem key={product.id} value={product.id}>
-                    <Box>
-                      <Typography variant="body1">{product.name}</Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        SKU: {product.sku} | Stock: {product.total_stock || 0}
-                      </Typography>
-                    </Box>
-                  </MenuItem>
-                ))
-              )}
-            </Select>
-          </FormControl>
+          {/* Product Select with Built-in Search */}
+          <Autocomplete
+            options={products}
+            getOptionLabel={(option) => option.name || ''}
+            value={selectedProduct}
+            onChange={(event, newValue) => {
+              setSelectedProduct(newValue);
+            }}
+            loading={productsLoading}
+            disabled={productsLoading}
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                label="Select Product"
+                placeholder="Search by product name or SKU..."
+                InputProps={{
+                  ...params.InputProps,
+                  startAdornment: (
+                    <>
+                      <InputAdornment position="start">
+                        <Search color="action" />
+                      </InputAdornment>
+                      {params.InputProps.startAdornment}
+                    </>
+                  ),
+                }}
+              />
+            )}
+            renderOption={(props, product) => (
+              <Box component="li" {...props} key={product.id}>
+                <Box>
+                  <Typography variant="body1">{product.name}</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    SKU: {product.sku} | Stock: {product.total_stock || 0}
+                  </Typography>
+                </Box>
+              </Box>
+            )}
+            filterOptions={(options, { inputValue }) => {
+              if (!inputValue) {
+                return options;
+              }
+              const searchLower = inputValue.toLowerCase();
+              return options.filter(
+                (product) =>
+                  product.name.toLowerCase().includes(searchLower) ||
+                  product.sku.toLowerCase().includes(searchLower)
+              );
+            }}
+            noOptionsText={
+              productsLoading
+                ? 'Loading products...'
+                : productsError
+                ? 'Error loading products'
+                : 'No products found'
+            }
+            isOptionEqualToValue={(option, value) => option.id === value.id}
+          />
 
           <TextField
             fullWidth

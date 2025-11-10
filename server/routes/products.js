@@ -62,6 +62,7 @@ const productSchema = Joi.object({
     'number.max': 'GST rate must not exceed 100%',
     'any.required': 'GST rate is required',
   }),
+  rack: Joi.string().allow('').max(50),
 });
 
 const updateProductSchema = Joi.object({
@@ -82,6 +83,7 @@ const updateProductSchema = Joi.object({
     'number.min': 'GST rate must be at least 0%',
     'number.max': 'GST rate must not exceed 100%',
   }),
+  rack: Joi.string().allow('').max(50),
   images: Joi.array().items(Joi.string()).allow(null),
 });
 
@@ -123,8 +125,10 @@ router.get('/', authenticateToken, async (req, res) => {
     } = req.query;
 
     const pageNum = parseInt(page) || 1;
-    const limitNum = parseInt(limit) || 10;
-    const offset = (pageNum - 1) * limitNum;
+    // Support 'all' parameter to fetch all products without pagination
+    const fetchAll = req.query.all === 'true' || req.query.all === true;
+    const limitNum = fetchAll ? 999999 : (parseInt(limit) || 10);
+    const offset = fetchAll ? 0 : (pageNum - 1) * limitNum;
 
     let query = `
       SELECT 
@@ -144,14 +148,18 @@ router.get('/', authenticateToken, async (req, res) => {
     const params = [];
     const conditions = [];
 
+    // When fetching all products, don't apply search or category filters
+    // This ensures we get ALL products for dropdowns
+    if (!fetchAll) {
     if (search) {
       conditions.push('(p.name LIKE ? OR p.sku LIKE ?)');
       params.push(`%${search}%`, `%${search}%`);
-    }
+      }
 
-    if (category) {
-      conditions.push('p.category = ?');
-      params.push(category);
+      if (category) {
+        conditions.push('p.category = ?');
+        params.push(category);
+      }
     }
 
     if (conditions.length > 0) {
@@ -170,8 +178,10 @@ router.get('/', authenticateToken, async (req, res) => {
     const order = sortOrder.toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
     query += ` ORDER BY ${sortColumn} ${order}`;
 
-    // Add pagination
+    // Add pagination (skip if fetching all)
+    if (!fetchAll) {
     query += ` LIMIT ${limitNum} OFFSET ${offset}`;
+    }
 
     const [result] = await pool.execute(query, params);
 
@@ -196,9 +206,10 @@ router.get('/', authenticateToken, async (req, res) => {
     `;
     const countParams = [];
 
-    if (search || category) {
+    // When fetching all, don't apply filters to count query either
+    if (!fetchAll && (search || category)) {
       const countConditions = [];
-      if (search) {
+    if (search) {
         countConditions.push('(p.name LIKE ? OR p.sku LIKE ?)');
         countParams.push(`%${search}%`, `%${search}%`);
       }
@@ -212,7 +223,7 @@ router.get('/', authenticateToken, async (req, res) => {
     const [countResult] = await pool.execute(countQuery, countParams);
 
     const total = parseInt(countResult[0].total);
-    const totalPages = Math.ceil(total / limitNum);
+    const totalPages = fetchAll ? 1 : Math.ceil(total / limitNum);
 
     res.json({
       success: true,
@@ -388,6 +399,7 @@ router.post(
       const { error } = productSchema.validate(req.body);
       if (error) {
         await connection.rollback();
+        connection.release();
         return res.status(400).json({
           success: false,
           message: error.details[0].message,
@@ -404,6 +416,7 @@ router.post(
         product_type = 'domestic',
         hsn_code,
         gst_rate,
+        rack = '',
       } = req.body;
 
       // Check if SKU already exists
@@ -414,6 +427,7 @@ router.post(
 
       if (existingProduct.length > 0) {
         await connection.rollback();
+        connection.release();
         return res.status(400).json({
           success: false,
           message: 'SKU already exists',
@@ -422,8 +436,8 @@ router.post(
 
       // Create product first
       const [result] = await connection.execute(
-        `INSERT INTO products (name, sku, price, category, unit, status, product_type, hsn_code, gst_rate, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+        `INSERT INTO products (name, sku, price, category, unit, status, product_type, hsn_code, gst_rate, rack, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
         [
           name,
           sku,
@@ -434,6 +448,7 @@ router.post(
           product_type,
           hsn_code,
           gst_rate,
+          rack,
         ],
       );
 
@@ -619,6 +634,7 @@ router.put(
 
       if (existingProduct.length === 0) {
         await connection.rollback();
+        connection.release();
         return res.status(404).json({
           success: false,
           message: 'Product not found',
@@ -634,6 +650,7 @@ router.put(
 
         if (skuCheck.length > 0) {
           await connection.rollback();
+          connection.release();
           return res.status(400).json({
             success: false,
             message: 'SKU already exists',
@@ -683,6 +700,7 @@ router.put(
 
       if (updateFields.length === 0) {
         await connection.rollback();
+        connection.release();
         return res.status(400).json({
           success: false,
           message: 'No fields to update',
@@ -749,6 +767,7 @@ router.post(
       // Validate input
       if (!['in', 'out'].includes(type)) {
         await connection.rollback();
+        connection.release();
         return res.status(400).json({
           success: false,
           message: "Transaction type must be 'in' or 'out'",
@@ -757,6 +776,7 @@ router.post(
 
       if (!quantity || quantity <= 0) {
         await connection.rollback();
+        connection.release();
         return res.status(400).json({
           success: false,
           message: 'Quantity must be a positive number',
@@ -771,6 +791,7 @@ router.post(
 
       if (productResult.length === 0) {
         await connection.rollback();
+        connection.release();
         return res.status(404).json({
           success: false,
           message: 'Product not found',
@@ -791,6 +812,7 @@ router.post(
       // For OUT transactions, check if sufficient stock is available
       if (type === 'out' && currentStock < quantity) {
         await connection.rollback();
+        connection.release();
         return res.status(400).json({
           success: false,
           message: `Insufficient stock. Available: ${currentStock}, Requested: ${quantity}`,
@@ -970,6 +992,7 @@ router.delete(
 
       if (parseInt(transactionCount[0].count) > 0) {
         await connection.rollback();
+        connection.release();
         return res.status(400).json({
           success: false,
           message: 'Cannot delete product with existing transactions',
