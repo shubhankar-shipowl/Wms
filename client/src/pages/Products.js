@@ -35,6 +35,7 @@ import {
   ChevronRight,
   KeyboardArrowUp,
   KeyboardArrowDown,
+  Download,
 } from '@mui/icons-material';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import { useNavigate } from 'react-router-dom';
@@ -324,13 +325,15 @@ const ProductCard = ({
             {product.name}
           </Typography>
 
-          {/* SKU and Rack */}
+          {/* SKU, Zone, and Rack */}
           <Box
             sx={{
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
               mb: 0.5,
+              flexWrap: 'wrap',
+              gap: 0.5,
             }}
           >
             <Typography
@@ -340,20 +343,51 @@ const ProductCard = ({
             >
               SKU: {product.sku}
             </Typography>
-            {product.rack && (
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+              {product.zone && (
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{
+                    fontSize: '0.75rem',
+                    fontFamily: 'monospace',
+                    fontWeight: 500,
+                  }}
+                >
+                  Zone: {product.zone}
+                </Typography>
+              )}
+              {product.rack && (
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{
+                    fontSize: '0.75rem',
+                    fontFamily: 'monospace',
+                    fontWeight: 500,
+                  }}
+                >
+                  Rack: {product.rack}
+                </Typography>
+              )}
+            </Box>
+          </Box>
+
+          {/* Category */}
+          {product.category && (
+            <Box sx={{ mb: 0.5 }}>
               <Typography
                 variant="body2"
                 color="text.secondary"
                 sx={{
                   fontSize: '0.75rem',
-                  fontFamily: 'monospace',
-                  fontWeight: 500,
+                  fontStyle: 'italic',
                 }}
               >
-                Rack: {product.rack}
+                Category: {product.category}
               </Typography>
-            )}
-          </Box>
+            </Box>
+          )}
 
           {/* Price */}
           <Typography
@@ -514,6 +548,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
       hsn_code: '',
       gst_rate: '',
       rack: '',
+      zone: '',
     },
   });
 
@@ -543,6 +578,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
         hsn_code: product.hsn_code || '',
         gst_rate: product.gst_rate || '',
         rack: product.rack || '',
+        zone: product.zone || '',
       });
 
       // Handle existing images
@@ -579,6 +615,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
         hsn_code: '',
         gst_rate: '',
         rack: '',
+        zone: '',
       });
       setImagePreview([]);
       setSelectedImages([]);
@@ -1025,6 +1062,40 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
             </Grid>
 
             <Grid item xs={12} sm={6}>
+              <FormControl fullWidth>
+                <InputLabel>Zone</InputLabel>
+                <Controller
+                  name="zone"
+                  control={control}
+                  render={({ field }) => (
+                    <Select
+                      {...field}
+                      label="Zone"
+                      error={!!errors.zone}
+                    >
+                      <MenuItem value="">None</MenuItem>
+                      <MenuItem value="A">A</MenuItem>
+                      <MenuItem value="B">B</MenuItem>
+                      <MenuItem value="C">C</MenuItem>
+                      <MenuItem value="D">D</MenuItem>
+                      <MenuItem value="E">E</MenuItem>
+                      <MenuItem value="F">F</MenuItem>
+                      <MenuItem value="G">G</MenuItem>
+                      <MenuItem value="H">H</MenuItem>
+                      <MenuItem value="I">I</MenuItem>
+                      <MenuItem value="J">J</MenuItem>
+                    </Select>
+                  )}
+                />
+              </FormControl>
+              {errors.zone && (
+                <Typography variant="caption" color="error" sx={{ ml: 2 }}>
+                  {errors.zone.message}
+                </Typography>
+              )}
+            </Grid>
+
+            <Grid item xs={12} sm={6}>
               <TextField
                 fullWidth
                 label="Rack"
@@ -1295,6 +1366,74 @@ const Products = () => {
     queryClient.invalidateQueries('barcodes');
   };
 
+  const handleExportCSV = async () => {
+    try {
+      const params = {};
+      if (search) params.search = search;
+      if (categoryFilter) params.category = categoryFilter;
+
+      const response = await axios.get('/api/products/export/csv', {
+        params,
+        responseType: 'blob',
+      });
+
+      // Check response status - if not 200, it's an error
+      if (response.status !== 200) {
+        // Try to parse error from blob
+        const text = await response.data.text();
+        try {
+          const errorData = JSON.parse(text);
+          throw new Error(errorData.message || 'Export failed');
+        } catch (parseError) {
+          throw new Error('Failed to export products');
+        }
+      }
+
+      // Check content type to ensure it's CSV, not JSON error
+      const contentType = response.headers['content-type'] || '';
+      if (contentType.includes('application/json')) {
+        const text = await response.data.text();
+        const errorData = JSON.parse(text);
+        throw new Error(errorData.message || 'Export failed');
+      }
+
+      // Create blob from response data
+      const blob = new Blob([response.data], { type: 'text/csv;charset=utf-8;' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute(
+        'download',
+        `products_export_${new Date().toISOString().split('T')[0]}.csv`,
+      );
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success('Products exported successfully');
+    } catch (error) {
+      console.error('Export failed:', error);
+      
+      // Handle axios errors
+      if (error.response) {
+        // Try to extract error message from blob if it's a JSON error
+        if (error.response.data && error.response.data instanceof Blob) {
+          try {
+            const text = await error.response.data.text();
+            const errorData = JSON.parse(text);
+            toast.error(errorData.message || 'Failed to export products. Please try again.');
+            return;
+          } catch {
+            // Not JSON, continue
+          }
+        }
+        toast.error(error.response.data?.message || 'Failed to export products. Please try again.');
+      } else {
+        toast.error(error.message || 'Failed to export products. Please try again.');
+      }
+    }
+  };
+
   // Scroll handling - check if scrolling is possible
   const checkScrollPosition = () => {
     const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
@@ -1380,27 +1519,50 @@ const Products = () => {
             Manage your inventory products
           </Typography>
         </Box>
-        {canEdit && (
+        <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
           <Button
-            variant="contained"
-            startIcon={<Add />}
-            onClick={() => setDialogOpen(true)}
+            variant="outlined"
+            startIcon={<Download />}
+            onClick={handleExportCSV}
             sx={{
               borderRadius: 2,
               px: 3,
               py: 1,
               fontWeight: 600,
               textTransform: 'none',
-              boxShadow: '0 4px 12px rgba(25, 118, 210, 0.3)',
+              borderColor: 'primary.main',
+              color: 'primary.main',
               '&:hover': {
-                boxShadow: '0 6px 16px rgba(25, 118, 210, 0.4)',
-                transform: 'translateY(-1px)',
+                borderColor: 'primary.dark',
+                backgroundColor: 'primary.light',
+                color: 'white',
               },
             }}
           >
-            Add Product
+            Export CSV
           </Button>
-        )}
+          {canEdit && (
+            <Button
+              variant="contained"
+              startIcon={<Add />}
+              onClick={() => setDialogOpen(true)}
+              sx={{
+                borderRadius: 2,
+                px: 3,
+                py: 1,
+                fontWeight: 600,
+                textTransform: 'none',
+                boxShadow: '0 4px 12px rgba(25, 118, 210, 0.3)',
+                '&:hover': {
+                  boxShadow: '0 6px 16px rgba(25, 118, 210, 0.4)',
+                  transform: 'translateY(-1px)',
+                },
+              }}
+            >
+              Add Product
+            </Button>
+          )}
+        </Box>
       </Box>
 
       {/* Search and Filter */}

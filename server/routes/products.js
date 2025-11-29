@@ -63,6 +63,7 @@ const productSchema = Joi.object({
     'any.required': 'GST rate is required',
   }),
   rack: Joi.string().allow('').max(50),
+  zone: Joi.string().valid('', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J').allow(''),
 });
 
 const updateProductSchema = Joi.object({
@@ -84,7 +85,128 @@ const updateProductSchema = Joi.object({
     'number.max': 'GST rate must not exceed 100%',
   }),
   rack: Joi.string().allow('').max(50),
+  zone: Joi.string().valid('', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J').allow(''),
   images: Joi.array().items(Joi.string()).allow(null),
+});
+
+// Export products to CSV
+router.get('/export/csv', authenticateToken, async (req, res) => {
+  try {
+    const { search, category } = req.query;
+
+    const params = [];
+    const conditions = [];
+
+    let query = `
+      SELECT 
+        p.id,
+        p.name,
+        p.sku,
+        p.price,
+        p.category,
+        p.product_type,
+        p.hsn_code,
+        p.gst_rate,
+        p.rack,
+        p.created_at,
+        p.updated_at
+      FROM products p
+    `;
+
+    if (search) {
+      conditions.push('(p.name LIKE ? OR p.sku LIKE ?)');
+      const searchTerm = `%${search}%`;
+      params.push(searchTerm, searchTerm);
+    }
+
+    if (category) {
+      conditions.push('p.category = ?');
+      params.push(category);
+    }
+
+    if (conditions.length > 0) {
+      query += ' WHERE ' + conditions.join(' AND ');
+    }
+
+    query += ' ORDER BY p.sku ASC';
+
+    const [products] = await pool.execute(query, params);
+
+    // Generate CSV content
+    const csvHeader = [
+      'ID',
+      'Product Name',
+      'SKU',
+      'Price (₹)',
+      'Category',
+      'Product Type',
+      'HSN Code',
+      'GST Rate (%)',
+      'Rack',
+      'Created At',
+      'Updated At',
+    ].join(',');
+
+    const csvRows = products.map((product) => {
+      const formatDate = (date) => {
+        if (!date) return '';
+        const d = new Date(date);
+        return d.toLocaleString('en-US', {
+          year: 'numeric',
+          month: 'short',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: false,
+        });
+      };
+
+      return [
+        product.id,
+        `"${(product.name || '').replace(/"/g, '""')}"`,
+        `"${(product.sku || '').replace(/"/g, '""')}"`,
+        product.price || 0,
+        `"${(product.category || '').replace(/"/g, '""')}"`,
+        `"${(product.product_type || '').replace(/"/g, '""')}"`,
+        `"${(product.hsn_code || '').replace(/"/g, '""')}"`,
+        product.gst_rate || 0,
+        `"${(product.rack || '').replace(/"/g, '""')}"`,
+        `"${formatDate(product.created_at)}"`,
+        `"${formatDate(product.updated_at)}"`,
+      ].join(',');
+    });
+
+    const csvContent = [csvHeader, ...csvRows].join('\n');
+
+    // Set headers for CSV download
+    const filename = `products_export_${
+      new Date().toISOString().split('T')[0]
+    }.csv`;
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
+    // Add BOM for Excel compatibility (prepend to content)
+    const csvWithBOM = '\ufeff' + csvContent;
+    
+    // Send CSV response
+    res.send(csvWithBOM);
+  } catch (error) {
+    console.error('Export products CSV error:', error);
+    // If headers already sent, we can't send JSON
+    if (res.headersSent) {
+      return res.end();
+    }
+    res.status(500).json({
+      success: false,
+      message: 'Failed to export products to CSV',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    });
+  }
 });
 
 // Get all unique categories
@@ -417,6 +539,7 @@ router.post(
         hsn_code,
         gst_rate,
         rack = '',
+        zone = '',
       } = req.body;
 
       // Check if SKU already exists
@@ -436,8 +559,8 @@ router.post(
 
       // Create product first
       const [result] = await connection.execute(
-        `INSERT INTO products (name, sku, price, category, unit, status, product_type, hsn_code, gst_rate, rack, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+        `INSERT INTO products (name, sku, price, category, unit, status, product_type, hsn_code, gst_rate, rack, zone, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
         [
           name,
           sku,
@@ -449,6 +572,7 @@ router.post(
           hsn_code,
           gst_rate,
           rack,
+          zone,
         ],
       );
 
