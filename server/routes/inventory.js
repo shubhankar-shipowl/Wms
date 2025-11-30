@@ -15,7 +15,7 @@ router.get("/overview", authenticateToken, async (req, res) => {
 
     // Get total barcodes
     const [totalBarcodesResult] = await pool.execute(
-      "SELECT COUNT(*) as count FROM products"
+      "SELECT COUNT(*) as count FROM barcodes"
     );
     const totalBarcodes = parseInt(totalBarcodesResult[0].count);
 

@@ -97,7 +97,7 @@ router.get("/", authenticateToken, dbHealthCheck, async (req, res) => {
     const [metricsResult] = await pool.execute(`
       SELECT 
         (SELECT COUNT(*) FROM products) as total_products,
-        (SELECT COUNT(*) FROM products) as total_barcodes,
+        (SELECT COUNT(*) FROM barcodes) as total_barcodes,
         (SELECT COALESCE(SUM(p.price * p.stock_quantity), 0) 
          FROM products p) as total_inventory_value,
         (SELECT COUNT(*) FROM products WHERE stock_quantity <= 10) as active_alerts,
@@ -269,7 +269,7 @@ router.get("/metrics/realtime", authenticateToken, async (req, res) => {
     const [result] = await pool.execute(`
       SELECT 
         (SELECT COUNT(*) FROM products) as total_products,
-        (SELECT COUNT(*) FROM products) as total_barcodes,
+        (SELECT COUNT(*) FROM barcodes) as total_barcodes,
         (SELECT COALESCE(SUM(stock_quantity), 0) 
          FROM products) as total_stock_units,
         (SELECT COALESCE(SUM(p.price * p.stock_quantity), 0) 

@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs-extra');
 const { pool, getTableName } = require('../config/database');
 const { authenticateToken, requireRole } = require('../middleware/auth');
+const cache = require('../config/cache');
 const {
   upload,
   processImages,
@@ -89,8 +90,8 @@ const updateProductSchema = Joi.object({
   images: Joi.array().items(Joi.string()).allow(null),
 });
 
-// Export products to CSV
-router.get('/export/csv', authenticateToken, async (req, res) => {
+// Export products to CSV (Admin only)
+router.get('/export/csv', authenticateToken, requireRole(['admin']), async (req, res) => {
   try {
     const { search, category } = req.query;
 
@@ -210,6 +211,41 @@ router.get('/export/csv', authenticateToken, async (req, res) => {
 });
 
 // Get all unique categories
+// Get next SKU (auto-increment)
+router.get('/next-sku', authenticateToken, async (req, res) => {
+  try {
+    // Get the latest SKU from database
+    const [result] = await pool.execute(
+      'SELECT sku FROM products WHERE sku LIKE "BW%" ORDER BY sku DESC LIMIT 1'
+    );
+
+    let nextSku = 'BW00001'; // Default if no products exist
+
+    if (result.length > 0) {
+      const latestSku = result[0].sku;
+      // Extract number from SKU (e.g., "BW00035" -> 35)
+      const match = latestSku.match(/BW(\d+)/);
+      if (match) {
+        const number = parseInt(match[1], 10);
+        const nextNumber = number + 1;
+        // Format with leading zeros (5 digits)
+        nextSku = `BW${nextNumber.toString().padStart(5, '0')}`;
+      }
+    }
+
+    res.json({
+      success: true,
+      data: { nextSku },
+    });
+  } catch (error) {
+    console.error('Get next SKU error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+    });
+  }
+});
+
 router.get('/categories', authenticateToken, async (req, res) => {
   try {
     const [categories] = await pool.execute(
@@ -449,11 +485,10 @@ router.get('/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// Create new product with image upload
+// Create new product with image upload (All authenticated users)
 router.post(
   '/',
   authenticateToken,
-  requireRole(['admin', 'user']),
   (req, res, next) => {
     upload(req, res, (err) => {
       if (err) {
@@ -633,6 +668,13 @@ router.post(
       // Emit real-time update
       req.io.emit('product_created', product);
 
+      // Invalidate dashboard cache
+      try {
+        await cache.delPattern('dashboard:*');
+      } catch (cacheError) {
+        console.warn('Cache invalidation error:', cacheError);
+      }
+
       res.status(201).json({
         success: true,
         message: 'Product created successfully',
@@ -667,11 +709,11 @@ router.post(
   },
 );
 
-// Update product
+// Update product (Admin only)
 router.put(
   '/:id',
   authenticateToken,
-  requireRole(['admin', 'user']),
+  requireRole(['admin']),
   (req, res, next) => {
     upload(req, res, (err) => {
       if (err) {
@@ -851,6 +893,13 @@ router.put(
 
       // Emit real-time update
       req.io.emit('product_updated', updatedProduct[0]);
+
+      // Invalidate dashboard cache
+      try {
+        await cache.delPattern('dashboard:*');
+      } catch (cacheError) {
+        console.warn('Cache invalidation error:', cacheError);
+      }
 
       res.json({
         success: true,
@@ -1143,6 +1192,13 @@ router.delete(
 
       // Emit real-time update
       req.io.emit('product_deleted', { id: parseInt(id) });
+
+      // Invalidate dashboard cache
+      try {
+        await cache.delPattern('dashboard:*');
+      } catch (cacheError) {
+        console.warn('Cache invalidation error:', cacheError);
+      }
 
       res.json({
         success: true,

@@ -254,7 +254,6 @@ const ProductCard = ({
   onEdit,
   onDelete,
   onView,
-  canEdit,
   isAdmin,
 }) => {
   return (
@@ -473,7 +472,7 @@ const ProductCard = ({
           <Visibility />
         </IconButton>
 
-        {canEdit && (
+        {isAdmin && (
           <IconButton
             size="small"
             onClick={() => onEdit(product)}
@@ -512,6 +511,29 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
   const [customCategoryValue, setCustomCategoryValue] = useState('');
   const [availableCategories, setAvailableCategories] = useState([]);
 
+  const {
+    register,
+    handleSubmit,
+    reset,
+    control,
+    setValue,
+    formState: { errors },
+  } = useForm({
+    defaultValues: product || {
+      name: '',
+      sku: '',
+      price: '',
+      category: '',
+      unit: 'pcs',
+      status: 'active',
+      product_type: 'domestic',
+      hsn_code: '',
+      gst_rate: '',
+      rack: '',
+      zone: '',
+    },
+  });
+
   // Fetch available categories from database
   useEffect(() => {
     const fetchCategories = async () => {
@@ -530,27 +552,29 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
     }
   }, [open, onSuccess]);
 
-  const {
-    register,
-    handleSubmit,
-    reset,
-    control,
-    formState: { errors },
-  } = useForm({
-    defaultValues: product || {
-      name: '',
-      sku: '',
-      price: '',
-      category: '',
-      unit: 'pcs',
-      status: 'active',
-      product_type: 'domestic',
-      hsn_code: '',
-      gst_rate: '',
-      rack: '',
-      zone: '',
-    },
-  });
+  // Fetch next SKU when form opens for new product
+  useEffect(() => {
+    // Only fetch if dialog is open and no product (new product form)
+    if (!open || product) return;
+
+    const fetchNextSku = async () => {
+      try {
+        // Small delay to ensure form reset completes first
+        await new Promise(resolve => setTimeout(resolve, 200));
+        const response = await axios.get('/api/products/next-sku');
+        if (response.data.success && response.data.data.nextSku) {
+          setValue('sku', response.data.data.nextSku, { 
+            shouldValidate: false, 
+            shouldDirty: false 
+          });
+        }
+      } catch (error) {
+        console.error('Error fetching next SKU:', error);
+      }
+    };
+
+    fetchNextSku();
+  }, [open, product, setValue]);
 
   // Reset form when product changes
   useEffect(() => {
@@ -604,9 +628,10 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
       // Reset to default values for new product
       setIsCustomCategory(false);
       setCustomCategoryValue('');
+      // Don't reset SKU here - let the useEffect fetch the next SKU
       reset({
         name: '',
-        sku: '',
+        sku: '', // Will be populated by useEffect
         price: '',
         category: '',
         unit: 'pcs',
@@ -888,12 +913,22 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
             </Grid>
 
             <Grid item xs={12} sm={6}>
-              <TextField
-                fullWidth
-                label="SKU"
-                {...register('sku', { required: 'SKU is required' })}
-                error={!!errors.sku}
-                helperText={errors.sku?.message}
+              <Controller
+                name="sku"
+                control={control}
+                rules={{ required: 'SKU is required' }}
+                render={({ field }) => (
+                  <TextField
+                    fullWidth
+                    label="SKU"
+                    {...field}
+                    error={!!errors.sku}
+                    helperText={errors.sku?.message}
+                    InputLabelProps={{
+                      shrink: !!field.value,
+                    }}
+                  />
+                )}
               />
             </Grid>
 
@@ -1029,8 +1064,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
                   },
                 })}
                 error={!!errors.hsn_code}
-                helperText={errors.hsn_code?.message}
-                placeholder="e.g., 1234"
+                helperText={errors.hsn_code?.message || 'Enter HSN code (4-20 characters)'}
               />
             </Grid>
 
@@ -1102,9 +1136,8 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
                 {...register('rack')}
                 error={!!errors.rack}
                 helperText={
-                  errors.rack?.message || 'Optional: Enter the rack location'
+                  errors.rack?.message || 'Optional: Enter the rack location (e.g., A1-01, B1-01)'
                 }
-                placeholder="e.g., A1-01, B1-01"
               />
             </Grid>
 
@@ -1520,27 +1553,29 @@ const Products = () => {
           </Typography>
         </Box>
         <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-          <Button
-            variant="outlined"
-            startIcon={<Download />}
-            onClick={handleExportCSV}
-            sx={{
-              borderRadius: 2,
-              px: 3,
-              py: 1,
-              fontWeight: 600,
-              textTransform: 'none',
-              borderColor: 'primary.main',
-              color: 'primary.main',
-              '&:hover': {
-                borderColor: 'primary.dark',
-                backgroundColor: 'primary.light',
-                color: 'white',
-              },
-            }}
-          >
-            Export CSV
-          </Button>
+          {isAdmin && (
+            <Button
+              variant="outlined"
+              startIcon={<Download />}
+              onClick={handleExportCSV}
+              sx={{
+                borderRadius: 2,
+                px: 3,
+                py: 1,
+                fontWeight: 600,
+                textTransform: 'none',
+                borderColor: 'primary.main',
+                color: 'primary.main',
+                '&:hover': {
+                  borderColor: 'primary.dark',
+                  backgroundColor: 'primary.light',
+                  color: 'white',
+                },
+              }}
+            >
+              Export CSV
+            </Button>
+          )}
           {canEdit && (
             <Button
               variant="contained"
@@ -1732,7 +1767,6 @@ const Products = () => {
               onEdit={handleEdit}
               onDelete={handleDelete}
               onView={handleView}
-              canEdit={canEdit}
               isAdmin={isAdmin}
             />
           </Grid>
