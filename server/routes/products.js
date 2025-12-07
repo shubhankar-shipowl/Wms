@@ -109,9 +109,11 @@ router.get('/export/csv', authenticateToken, requireRole(['admin']), async (req,
         p.hsn_code,
         p.gst_rate,
         p.rack,
-        p.created_at,
-        p.updated_at
+        p.stock_quantity,
+        COALESCE(SUM(CASE WHEN t.type = 'in' THEN t.quantity ELSE 0 END), 0) as stock_in,
+        COALESCE(SUM(CASE WHEN t.type = 'out' THEN t.quantity ELSE 0 END), 0) as stock_out
       FROM products p
+      LEFT JOIN transactions t ON p.id = t.product_id
     `;
 
     if (search) {
@@ -129,7 +131,10 @@ router.get('/export/csv', authenticateToken, requireRole(['admin']), async (req,
       query += ' WHERE ' + conditions.join(' AND ');
     }
 
-    query += ' ORDER BY p.sku ASC';
+    query += ' GROUP BY p.id, p.name, p.sku, p.price, p.category, p.product_type, p.hsn_code, p.gst_rate, p.rack, p.stock_quantity';
+
+    // Order by SKU from BW00001 to latest (numeric ordering for proper sequence)
+    query += ' ORDER BY CAST(SUBSTRING(p.sku, 3) AS UNSIGNED) ASC, p.sku ASC';
 
     const [products] = await pool.execute(query, params);
 
@@ -139,42 +144,30 @@ router.get('/export/csv', authenticateToken, requireRole(['admin']), async (req,
       'Product Name',
       'SKU',
       'Price (₹)',
+      'Stock In',
+      'Stock Out',
+      'Present Stock',
       'Category',
       'Product Type',
       'HSN Code',
       'GST Rate (%)',
       'Rack',
-      'Created At',
-      'Updated At',
     ].join(',');
 
     const csvRows = products.map((product) => {
-      const formatDate = (date) => {
-        if (!date) return '';
-        const d = new Date(date);
-        return d.toLocaleString('en-US', {
-          year: 'numeric',
-          month: 'short',
-          day: '2-digit',
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-          hour12: false,
-        });
-      };
-
       return [
         product.id,
         `"${(product.name || '').replace(/"/g, '""')}"`,
         `"${(product.sku || '').replace(/"/g, '""')}"`,
         product.price || 0,
+        product.stock_in || 0,
+        product.stock_out || 0,
+        product.stock_quantity || 0,
         `"${(product.category || '').replace(/"/g, '""')}"`,
         `"${(product.product_type || '').replace(/"/g, '""')}"`,
         `"${(product.hsn_code || '').replace(/"/g, '""')}"`,
         product.gst_rate || 0,
         `"${(product.rack || '').replace(/"/g, '""')}"`,
-        `"${formatDate(product.created_at)}"`,
-        `"${formatDate(product.updated_at)}"`,
       ].join(',');
     });
 
