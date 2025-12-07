@@ -271,6 +271,7 @@ router.get('/', authenticateToken, async (req, res) => {
       limit = 10,
       search = '',
       category = '',
+      hasImage = '',
       sortBy = 'name',
       sortOrder = 'ASC',
     } = req.query;
@@ -310,6 +311,14 @@ router.get('/', authenticateToken, async (req, res) => {
       if (category) {
         conditions.push('p.category = ?');
         params.push(category);
+      }
+
+      if (hasImage === 'true') {
+        // Filter products that have images (images is not null, not empty, and contains valid image IDs)
+        conditions.push('(p.images IS NOT NULL AND p.images != "" AND p.images != "[]" AND JSON_LENGTH(p.images) > 0)');
+      } else if (hasImage === 'false') {
+        // Filter products that don't have images (images is null, empty, or empty array)
+        conditions.push('(p.images IS NULL OR p.images = "" OR p.images = "[]" OR JSON_LENGTH(COALESCE(p.images, "[]")) = 0)');
       }
     }
 
@@ -358,7 +367,7 @@ router.get('/', authenticateToken, async (req, res) => {
     const countParams = [];
 
     // When fetching all, don't apply filters to count query either
-    if (!fetchAll && (search || category)) {
+    if (!fetchAll && (search || category || hasImage)) {
       const countConditions = [];
     if (search) {
         countConditions.push('(p.name LIKE ? OR p.sku LIKE ?)');
@@ -367,6 +376,11 @@ router.get('/', authenticateToken, async (req, res) => {
       if (category) {
         countConditions.push('p.category = ?');
         countParams.push(category);
+      }
+      if (hasImage === 'true') {
+        countConditions.push('(p.images IS NOT NULL AND p.images != "" AND p.images != "[]" AND JSON_LENGTH(p.images) > 0)');
+      } else if (hasImage === 'false') {
+        countConditions.push('(p.images IS NULL OR p.images = "" OR p.images = "[]" OR JSON_LENGTH(COALESCE(p.images, "[]")) = 0)');
       }
       countQuery += ` WHERE ${countConditions.join(' AND ')}`;
     }

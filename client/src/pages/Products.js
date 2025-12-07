@@ -36,6 +36,7 @@ import {
   KeyboardArrowUp,
   KeyboardArrowDown,
   Download,
+  Clear,
 } from '@mui/icons-material';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import { useNavigate } from 'react-router-dom';
@@ -1307,6 +1308,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
 const Products = () => {
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
+  const [imageFilter, setImageFilter] = useState('');
   const [stockFilter, setStockFilter] = useState('high_to_low');
   const [skuFilter, setSkuFilter] = useState('asc');
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -1329,7 +1331,7 @@ const Products = () => {
   );
 
   const { data: productsData, isLoading } = useQuery(
-    ['products', search, categoryFilter, stockFilter, skuFilter],
+    ['products', search, categoryFilter, imageFilter, stockFilter, skuFilter],
     () => {
       const sortOrder = stockFilter === 'high_to_low' ? 'DESC' : 'ASC';
       const skuSortOrder = skuFilter === 'asc' ? 'ASC' : 'DESC';
@@ -1339,6 +1341,7 @@ const Products = () => {
           params: {
             search,
             category: categoryFilter || undefined,
+            hasImage: imageFilter || undefined,
             // Fetch a larger page size to avoid missing cards when scrolling
             limit: 1000,
             sortBy: skuFilter === 'none' ? 'total_stock' : 'sku',
@@ -1398,6 +1401,17 @@ const Products = () => {
     queryClient.invalidateQueries('products-categories'); // Refresh categories list
     queryClient.invalidateQueries('barcodes');
   };
+
+  const handleClearFilters = () => {
+    setSearch('');
+    setCategoryFilter('');
+    setImageFilter('');
+    setStockFilter('high_to_low');
+    setSkuFilter('asc');
+  };
+
+  // Check if any filters are active
+  const hasActiveFilters = search || categoryFilter || imageFilter || stockFilter !== 'high_to_low' || skuFilter !== 'asc';
 
   const handleExportCSV = async () => {
     try {
@@ -1697,6 +1711,54 @@ const Products = () => {
                 ))}
               </Select>
             </FormControl>
+          </Grid>
+          <Grid item xs={12} sm={6} md={3}>
+            <FormControl fullWidth>
+              <InputLabel>Filter by Image</InputLabel>
+              <Select
+                value={imageFilter}
+                onChange={(e) => setImageFilter(e.target.value)}
+                label="Filter by Image"
+                sx={{
+                  '& .MuiOutlinedInput-root': {
+                    borderRadius: 2,
+                    backgroundColor: 'background.paper',
+                  },
+                }}
+              >
+                <MenuItem value="">All Products</MenuItem>
+                <MenuItem value="true">Image</MenuItem>
+                <MenuItem value="false">No Image</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
+          <Grid item xs={12} sm={6} md={3}>
+            <Button
+              variant="outlined"
+              startIcon={<Clear />}
+              onClick={handleClearFilters}
+              disabled={!hasActiveFilters}
+              fullWidth
+              sx={{
+                borderRadius: 2,
+                py: 1.5,
+                fontWeight: 600,
+                textTransform: 'none',
+                borderColor: 'error.main',
+                color: 'error.main',
+                '&:hover': {
+                  borderColor: 'error.dark',
+                  backgroundColor: 'error.light',
+                  color: 'white',
+                },
+                '&.Mui-disabled': {
+                  borderColor: 'action.disabled',
+                  color: 'action.disabled',
+                },
+              }}
+            >
+              Clear Filters
+            </Button>
           </Grid>
         </Grid>
 
