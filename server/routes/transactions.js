@@ -64,11 +64,13 @@ router.get('/', authenticateToken, async (req, res) => {
     }
 
     if (start_date) {
+      // Ensure we compare dates correctly, including transactions created at any time on the start date
       conditions.push('DATE(t.created_at) >= ?');
       params.push(start_date);
     }
 
     if (end_date) {
+      // Ensure we compare dates correctly, including transactions created at any time on the end date
       conditions.push('DATE(t.created_at) <= ?');
       params.push(end_date);
     }
@@ -91,7 +93,18 @@ router.get('/', authenticateToken, async (req, res) => {
       limit,
     )} OFFSET ${parseInt(offset)}`;
 
+    // Debug logging
+    if (start_date || end_date) {
+      console.log('[TRANSACTIONS] Query:', query);
+      console.log('[TRANSACTIONS] Params:', params);
+    }
+
     const [transactions] = await pool.execute(query, params);
+    
+    // Debug logging
+    if (start_date || end_date) {
+      console.log(`[TRANSACTIONS] Found ${transactions.length} transactions for date range ${start_date || 'N/A'} to ${end_date || 'N/A'}`);
+    }
 
     // Derive barcode number from notes when present (pattern: "Barcode: <digits>")
     const transactionsWithBarcode = transactions.map((t) => {
@@ -181,11 +194,13 @@ router.get('/export/csv', authenticateToken, async (req, res) => {
     }
 
     if (start_date) {
+      // Ensure we compare dates correctly, including transactions created at any time on the start date
       conditions.push('DATE(t.created_at) >= ?');
       params.push(start_date);
     }
 
     if (end_date) {
+      // Ensure we compare dates correctly, including transactions created at any time on the end date
       conditions.push('DATE(t.created_at) <= ?');
       params.push(end_date);
     }
@@ -280,19 +295,19 @@ router.get('/summary', authenticateToken, async (req, res) => {
     const params = [];
 
     if (start_date && end_date) {
-      // Use specific date range
+      // Use specific date range - ensure we include all transactions on both dates
       whereClause = `DATE(t.created_at) >= ? AND DATE(t.created_at) <= ?`;
       params.push(start_date, end_date);
       console.log(
         `[TRANSACTIONS] Date range filter: ${start_date} to ${end_date}`,
       );
     } else if (start_date) {
-      // Use start date to today
+      // Use start date to today - ensure we include all transactions on the start date
       whereClause = `DATE(t.created_at) >= ?`;
       params.push(start_date);
       console.log(`[TRANSACTIONS] Start date filter: ${start_date}`);
     } else if (end_date) {
-      // Use end date from beginning of time
+      // Use end date from beginning of time - ensure we include all transactions on the end date
       whereClause = `DATE(t.created_at) <= ?`;
       params.push(end_date);
       console.log(`[TRANSACTIONS] End date filter: ${end_date}`);

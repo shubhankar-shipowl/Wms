@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   Box,
   Typography,
@@ -14,7 +14,7 @@ import {
   Divider,
   Avatar,
   Chip,
-} from "@mui/material";
+} from '@mui/material';
 import {
   QrCodeScanner,
   Add,
@@ -22,19 +22,25 @@ import {
   History,
   Inventory,
   Search,
-} from "@mui/icons-material";
-import { useQuery, useMutation, useQueryClient } from "react-query";
-import axios from "axios";
-import toast from "react-hot-toast";
-import LoadingSpinner from "../components/Common/LoadingSpinner";
-import { useAuth } from "../contexts/AuthContext";
+} from '@mui/icons-material';
+import { useQuery, useMutation, useQueryClient } from 'react-query';
+import axios from 'axios';
+import toast from 'react-hot-toast';
+import LoadingSpinner from '../components/Common/LoadingSpinner';
+import { useAuth } from '../contexts/AuthContext';
 
 const BarcodeScanner = () => {
-  const [barcodeInput, setBarcodeInput] = useState("");
+  const [barcodeInput, setBarcodeInput] = useState('');
   const [scannedProduct, setScannedProduct] = useState(null);
-  const [selectedTransactionType, setSelectedTransactionType] = useState("IN");
+  const [selectedTransactionType, setSelectedTransactionType] = useState('IN');
   const [isScanning, setIsScanning] = useState(false);
-  const [lastScannedBarcode, setLastScannedBarcode] = useState("");
+  const [lastScannedBarcode, setLastScannedBarcode] = useState('');
+  const [isBulkMode, setIsBulkMode] = useState(false);
+  const [bulkResults, setBulkResults] = useState(null);
+  const [isProcessingBulk, setIsProcessingBulk] = useState(false);
+  const [transactionDate, setTransactionDate] = useState(
+    new Date().toISOString().split('T')[0],
+  ); // Default to today's date
   const inputRef = useRef(null);
   const queryClient = useQueryClient();
   const { user } = useAuth();
@@ -66,7 +72,14 @@ const BarcodeScanner = () => {
 
   // Handle barcode input change
   const handleBarcodeInputChange = (e) => {
-    setBarcodeInput(e.target.value);
+    const value = e.target.value;
+    setBarcodeInput(value);
+
+    // Auto-detect bulk mode if multiple barcodes detected (space or newline separated)
+    const barcodes = value.split(/\s+/).filter((b) => b.trim().length > 0);
+    if (barcodes.length > 1 && !isBulkMode) {
+      setIsBulkMode(true);
+    }
   };
 
   // Handle input click to ensure focus
@@ -76,7 +89,7 @@ const BarcodeScanner = () => {
 
   // Handle key press events (for USB scanner Enter detection)
   const handleKeyPress = (e) => {
-    if (e.key === "Enter") {
+    if (e.key === 'Enter') {
       e.preventDefault();
       handleBarcodeSubmit(e);
     }
@@ -86,11 +99,11 @@ const BarcodeScanner = () => {
   const checkBarcodeAlreadyStockedIn = async (barcode) => {
     try {
       const response = await axios.get(
-        `/api/scanner/check-stock-in/${barcode}`
+        `/api/scanner/check-stock-in/${barcode}`,
       );
       return response.data.alreadyStockedIn;
     } catch (error) {
-      console.error("Error checking barcode stock status:", error);
+      console.error('Error checking barcode stock status:', error);
       return false; // Allow stock in if check fails
     }
   };
@@ -103,9 +116,9 @@ const BarcodeScanner = () => {
 
     stockUpdateMutation.mutate({
       barcode: barcode,
-      type: "in",
+      type: 'in',
       quantity: 1,
-      notes: "Auto stock in via USB scanner",
+      notes: 'Auto stock in via USB scanner',
     });
   };
 
@@ -117,9 +130,9 @@ const BarcodeScanner = () => {
 
     stockUpdateMutation.mutate({
       barcode: barcode,
-      type: "out",
+      type: 'out',
       quantity: 1,
-      notes: "Auto stock out via USB scanner",
+      notes: 'Auto stock out via USB scanner',
     });
   };
 
@@ -128,32 +141,48 @@ const BarcodeScanner = () => {
     e.preventDefault();
     if (!barcodeInput.trim()) return;
 
-    const barcode = barcodeInput.trim();
+    const input = barcodeInput.trim();
+
+    // Check if input contains multiple barcodes (space-separated)
+    // Split by whitespace (spaces, tabs, newlines) and filter out empty strings
+    const barcodes = input
+      .split(/\s+/)
+      .map((b) => b.trim())
+      .filter((b) => b.length > 0);
+
+    if (barcodes.length > 1 || isBulkMode) {
+      // Bulk processing mode
+      handleBulkSubmit(barcodes);
+      return;
+    }
+
+    // Single barcode processing
+    const barcode = barcodes[0];
 
     // Prevent duplicate scanning of the same barcode
     if (barcode === lastScannedBarcode) {
       toast.error(
-        "❌ This barcode was just scanned. Please scan a different barcode."
+        '❌ This barcode was just scanned. Please scan a different barcode.',
       );
-      setBarcodeInput("");
+      setBarcodeInput('');
       setIsScanning(false);
       focusInput();
       return;
     }
 
     // For stock IN operations, check if barcode is already stocked in
-    if (selectedTransactionType === "IN") {
+    if (selectedTransactionType === 'IN') {
       try {
         const alreadyStockedIn = await checkBarcodeAlreadyStockedIn(barcode);
         if (alreadyStockedIn) {
-          toast.warning("⚠️ Barcode already stocked in. Ignored.");
-          setBarcodeInput("");
+          toast.warning('⚠️ Barcode already stocked in. Ignored.');
+          setBarcodeInput('');
           setIsScanning(false);
           focusInput();
           return;
         }
       } catch (error) {
-        console.error("Error checking barcode status:", error);
+        console.error('Error checking barcode status:', error);
         // Continue with lookup if check fails
       }
     }
@@ -162,21 +191,94 @@ const BarcodeScanner = () => {
     lookupMutation.mutate(barcode);
   };
 
+  // Handle bulk barcode submit
+  const handleBulkSubmit = async (barcodes) => {
+    if (barcodes.length === 0) return;
+
+    // Clean and trim all barcodes
+    const cleanedBarcodes = barcodes
+      .map((b) => b.trim())
+      .filter((b) => b.length > 0);
+
+    if (cleanedBarcodes.length === 0) {
+      toast.error('❌ No valid barcodes found');
+      return;
+    }
+
+    if (cleanedBarcodes.length > 100) {
+      toast.error('❌ Maximum 100 barcodes allowed per bulk operation');
+      return;
+    }
+
+    setIsProcessingBulk(true);
+    setBulkResults(null);
+
+    try {
+      // Use selected date or current date if not set
+      const dateToUse =
+        transactionDate || new Date().toISOString().split('T')[0];
+
+      const response = await axios.post('/api/scanner/bulk-update-stock', {
+        barcodes: cleanedBarcodes,
+        type: selectedTransactionType.toLowerCase(),
+        quantity: 1,
+        notes: `Bulk ${selectedTransactionType} via scanner`,
+        transaction_date: dateToUse,
+      });
+
+      const results = response.data.data;
+      setBulkResults(results);
+
+      // Show summary toast
+      if (results.summary.successful > 0 && results.summary.failed === 0) {
+        toast.success(
+          `✅ Successfully processed ${results.summary.successful} barcode(s)`,
+        );
+      } else if (results.summary.successful > 0) {
+        toast.success(
+          `✅ Processed ${results.summary.successful} barcode(s), ${results.summary.failed} failed`,
+        );
+      } else {
+        toast.error(`❌ All ${results.summary.failed} barcode(s) failed`);
+      }
+
+      // Clear input and refresh data
+      setBarcodeInput('');
+      queryClient.invalidateQueries('scan-history');
+      queryClient.invalidateQueries('scan-stats');
+      queryClient.invalidateQueries('products');
+      queryClient.invalidateQueries('dashboard');
+      queryClient.invalidateQueries('realtime-metrics');
+
+      // Auto-focus for next scan
+      setTimeout(() => {
+        focusInput();
+      }, 200);
+    } catch (error) {
+      const errorMessage =
+        error.response?.data?.message || 'Bulk operation failed';
+      toast.error(`❌ ${errorMessage}`);
+      setBulkResults(null);
+    } finally {
+      setIsProcessingBulk(false);
+    }
+  };
+
   // Fetch scan history
   const {
     data: scanHistoryData,
     error: scanHistoryError,
     isLoading: scanHistoryLoading,
-  } = useQuery("scan-history", () => axios.get("/api/scanner/scan-history"), {
+  } = useQuery('scan-history', () => axios.get('/api/scanner/scan-history'), {
     refetchInterval: 5000, // Refetch every 5 seconds for real-time updates
     enabled: !!user, // Only fetch if user is logged in
     onSuccess: (data) => {
       // console.log("Scan history query success:", data);
     },
     onError: (error) => {
-      console.error("Scan history query error:", error);
+      console.error('Scan history query error:', error);
       if (error.response?.status === 401) {
-        console.error("Authentication error - user not logged in");
+        console.error('Authentication error - user not logged in');
       }
     },
   });
@@ -186,29 +288,29 @@ const BarcodeScanner = () => {
     data: scanStatsData,
     error: scanStatsError,
     isLoading: scanStatsLoading,
-  } = useQuery("scan-stats", () => axios.get("/api/scanner/stats"), {
+  } = useQuery('scan-stats', () => axios.get('/api/scanner/stats'), {
     refetchInterval: 10000, // Refetch every 10 seconds for real-time updates
     enabled: !!user, // Only fetch if user is logged in
     onSuccess: (data) => {
       // console.log("Scan stats query success:", data);
     },
     onError: (error) => {
-      console.error("Scan stats query error:", error);
+      console.error('Scan stats query error:', error);
       if (error.response?.status === 401) {
-        console.error("Authentication error - user not logged in");
+        console.error('Authentication error - user not logged in');
       }
     },
   });
 
   // Lookup barcode mutation
   const lookupMutation = useMutation(
-    (barcode) => axios.post("/api/scanner/lookup", { barcode }),
+    (barcode) => axios.post('/api/scanner/lookup', { barcode }),
     {
       onSuccess: (response) => {
         setScannedProduct(response.data.data);
         setIsScanning(false);
         // Auto-perform stock operation based on selected mode
-        if (selectedTransactionType === "IN") {
+        if (selectedTransactionType === 'IN') {
           handleAutoStockIn(response.data.data);
         } else {
           handleAutoStockOut(response.data.data);
@@ -216,75 +318,75 @@ const BarcodeScanner = () => {
       },
       onError: (error) => {
         const errorMessage =
-          error.response?.data?.message || "Barcode not recognized";
+          error.response?.data?.message || 'Barcode not recognized';
         if (
-          errorMessage.includes("Invalid barcode format") ||
-          errorMessage.includes("not found in our system")
+          errorMessage.includes('Invalid barcode format') ||
+          errorMessage.includes('not found in our system')
         ) {
           toast.error(
-            "❌ Invalid barcode - Only system-generated barcodes are accepted"
+            '❌ Invalid barcode - Only system-generated barcodes are accepted',
           );
         } else if (
-          errorMessage.includes("Duplicate") &&
-          errorMessage.includes("operation detected")
+          errorMessage.includes('Duplicate') &&
+          errorMessage.includes('operation detected')
         ) {
           toast.error(
-            "⚠️ Duplicate operation - Same transaction type already performed recently. Please wait before repeating the same operation."
+            '⚠️ Duplicate operation - Same transaction type already performed recently. Please wait before repeating the same operation.',
           );
         } else if (
           errorMessage.includes(
-            "Cannot perform stock OUT on barcode that was never stocked IN"
+            'Cannot perform stock OUT on barcode that was never stocked IN',
           )
         ) {
           toast.error(
-            "❌ Invalid stock OUT - This barcode was never stocked IN. Please stock IN first."
+            '❌ Invalid stock OUT - This barcode was never stocked IN. Please stock IN first.',
           );
         } else {
-          toast.error("❌ Barcode not recognized");
+          toast.error('❌ Barcode not recognized');
         }
         // Clear UI state on error
         setScannedProduct(null);
         setIsScanning(false);
-        setBarcodeInput("");
-        setLastScannedBarcode("");
+        setBarcodeInput('');
+        setLastScannedBarcode('');
         // Auto-focus for next scan
         setTimeout(() => {
           focusInput();
         }, 200);
       },
-    }
+    },
   );
 
   // Direct stock update mutation - NO DIALOGS, NO CONFIRMATIONS
   const stockUpdateMutation = useMutation(
-    (data) => axios.post("/api/scanner/update-stock", data),
+    (data) => axios.post('/api/scanner/update-stock', data),
     {
       onSuccess: (response, variables) => {
         const type =
-          variables.type === "in"
-            ? "✅ Stock In Recorded"
-            : "✅ Stock Out Recorded";
+          variables.type === 'in'
+            ? '✅ Stock In Recorded'
+            : '✅ Stock Out Recorded';
         toast.success(type);
 
         // Track the last scanned barcode to prevent duplicates
         setLastScannedBarcode(variables.barcode);
 
         // Clear input field for next scan
-        setBarcodeInput("");
+        setBarcodeInput('');
         setScannedProduct(null);
         setIsScanning(false);
 
         // Refresh data immediately after successful scan
-        queryClient.invalidateQueries("scan-history");
-        queryClient.invalidateQueries("scan-stats");
-        queryClient.invalidateQueries("products");
-        queryClient.invalidateQueries("dashboard");
-        queryClient.invalidateQueries("realtime-metrics");
+        queryClient.invalidateQueries('scan-history');
+        queryClient.invalidateQueries('scan-stats');
+        queryClient.invalidateQueries('products');
+        queryClient.invalidateQueries('dashboard');
+        queryClient.invalidateQueries('realtime-metrics');
 
         // Force refetch the stats to ensure immediate update
-        queryClient.refetchQueries("scan-stats");
-        queryClient.refetchQueries("scan-history");
-        queryClient.refetchQueries("dashboard");
+        queryClient.refetchQueries('scan-stats');
+        queryClient.refetchQueries('scan-history');
+        queryClient.refetchQueries('dashboard');
 
         // Auto-focus for next scan
         setTimeout(() => {
@@ -293,33 +395,33 @@ const BarcodeScanner = () => {
 
         // Clear the last scanned barcode after 5 seconds to allow re-scanning
         setTimeout(() => {
-          setLastScannedBarcode("");
+          setLastScannedBarcode('');
         }, 5000);
       },
       onError: (error) => {
         const errorMessage =
-          error.response?.data?.message || "Stock update failed";
+          error.response?.data?.message || 'Stock update failed';
         if (
-          errorMessage.includes("Invalid barcode format") ||
-          errorMessage.includes("not found in our system")
+          errorMessage.includes('Invalid barcode format') ||
+          errorMessage.includes('not found in our system')
         ) {
           toast.error(
-            "❌ Invalid barcode - Only system-generated barcodes are accepted"
+            '❌ Invalid barcode - Only system-generated barcodes are accepted',
           );
         } else if (
-          errorMessage.includes("Duplicate") &&
-          errorMessage.includes("operation detected")
+          errorMessage.includes('Duplicate') &&
+          errorMessage.includes('operation detected')
         ) {
           toast.error(
-            "⚠️ Duplicate operation - Same transaction type already performed recently. Please wait before repeating the same operation."
+            '⚠️ Duplicate operation - Same transaction type already performed recently. Please wait before repeating the same operation.',
           );
         } else if (
           errorMessage.includes(
-            "Cannot perform stock OUT on barcode that was never stocked IN"
+            'Cannot perform stock OUT on barcode that was never stocked IN',
           )
         ) {
           toast.error(
-            "❌ Invalid stock OUT - This barcode was never stocked IN. Please stock IN first."
+            '❌ Invalid stock OUT - This barcode was never stocked IN. Please stock IN first.',
           );
         } else {
           toast.error(errorMessage);
@@ -327,14 +429,14 @@ const BarcodeScanner = () => {
         // Clear UI state on error
         setScannedProduct(null);
         setIsScanning(false);
-        setBarcodeInput("");
-        setLastScannedBarcode("");
+        setBarcodeInput('');
+        setLastScannedBarcode('');
         // Auto-focus for next scan
         setTimeout(() => {
           focusInput();
         }, 200);
       },
-    }
+    },
   );
 
   // Global click handler to refocus input
@@ -342,11 +444,11 @@ const BarcodeScanner = () => {
     const handleGlobalClick = (e) => {
       // Only refocus if not clicking on interactive elements
       if (
-        !e.target.closest("button") &&
-        !e.target.closest("input") &&
-        !e.target.closest("a") &&
+        !e.target.closest('button') &&
+        !e.target.closest('input') &&
+        !e.target.closest('a') &&
         !e.target.closest("[role='button']") &&
-        !e.target.closest(".MuiDialog-root") &&
+        !e.target.closest('.MuiDialog-root') &&
         !isScanning &&
         !lookupMutation.isLoading &&
         !stockUpdateMutation.isLoading
@@ -355,8 +457,8 @@ const BarcodeScanner = () => {
       }
     };
 
-    document.addEventListener("click", handleGlobalClick);
-    return () => document.removeEventListener("click", handleGlobalClick);
+    document.addEventListener('click', handleGlobalClick);
+    return () => document.removeEventListener('click', handleGlobalClick);
   }, [
     isScanning,
     lookupMutation.isLoading,
@@ -377,9 +479,9 @@ const BarcodeScanner = () => {
       }
     };
 
-    document.addEventListener("visibilitychange", handleVisibilityChange);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     return () =>
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [focusInput]);
 
   const scanHistory = Array.isArray(scanHistoryData?.data?.data)
@@ -396,7 +498,7 @@ const BarcodeScanner = () => {
         </Alert>
         <Button
           variant="contained"
-          onClick={() => (window.location.href = "/login")}
+          onClick={() => (window.location.href = '/login')}
           sx={{ mt: 2 }}
         >
           Go to Login
@@ -415,23 +517,23 @@ const BarcodeScanner = () => {
       <Card
         sx={{
           mb: 3,
-          background: "linear-gradient(135deg, #1976d2 0%, #1565c0 100%)",
-          color: "white",
+          background: 'linear-gradient(135deg, #1976d2 0%, #1565c0 100%)',
+          color: 'white',
           boxShadow: 3,
         }}
       >
         <CardContent sx={{ py: 3 }}>
           <Box
             sx={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
             }}
           >
-            <Box sx={{ display: "flex", alignItems: "center" }}>
+            <Box sx={{ display: 'flex', alignItems: 'center' }}>
               <QrCodeScanner sx={{ fontSize: 32, mr: 2 }} />
               <Box>
-                <Typography variant="h5" sx={{ fontWeight: "bold", mb: 0.5 }}>
+                <Typography variant="h5" sx={{ fontWeight: 'bold', mb: 0.5 }}>
                   Scanner Mode: Stock {selectedTransactionType}
                 </Typography>
                 <Typography variant="body2" sx={{ opacity: 0.9 }}>
@@ -439,28 +541,28 @@ const BarcodeScanner = () => {
                 </Typography>
               </Box>
             </Box>
-            <Box sx={{ display: "flex", gap: 2 }}>
+            <Box sx={{ display: 'flex', gap: 2 }}>
               <Button
                 variant={
-                  selectedTransactionType === "IN" ? "contained" : "outlined"
+                  selectedTransactionType === 'IN' ? 'contained' : 'outlined'
                 }
                 size="large"
                 startIcon={<Add />}
                 endIcon={<Inventory />}
-                onClick={() => setSelectedTransactionType("IN")}
+                onClick={() => setSelectedTransactionType('IN')}
                 sx={{
                   minWidth: 140,
                   height: 48,
                   backgroundColor:
-                    selectedTransactionType === "IN" ? "white" : "transparent",
-                  color: selectedTransactionType === "IN" ? "#1976d2" : "white",
-                  borderColor: "white",
-                  "&:hover": {
+                    selectedTransactionType === 'IN' ? 'white' : 'transparent',
+                  color: selectedTransactionType === 'IN' ? '#1976d2' : 'white',
+                  borderColor: 'white',
+                  '&:hover': {
                     backgroundColor:
-                      selectedTransactionType === "IN"
-                        ? "rgba(255,255,255,0.9)"
-                        : "rgba(255,255,255,0.1)",
-                    borderColor: "white",
+                      selectedTransactionType === 'IN'
+                        ? 'rgba(255,255,255,0.9)'
+                        : 'rgba(255,255,255,0.1)',
+                    borderColor: 'white',
                   },
                 }}
               >
@@ -468,26 +570,26 @@ const BarcodeScanner = () => {
               </Button>
               <Button
                 variant={
-                  selectedTransactionType === "OUT" ? "contained" : "outlined"
+                  selectedTransactionType === 'OUT' ? 'contained' : 'outlined'
                 }
                 size="large"
                 startIcon={<Remove />}
                 endIcon={<Inventory />}
-                onClick={() => setSelectedTransactionType("OUT")}
+                onClick={() => setSelectedTransactionType('OUT')}
                 sx={{
                   minWidth: 140,
                   height: 48,
                   backgroundColor:
-                    selectedTransactionType === "OUT" ? "white" : "transparent",
+                    selectedTransactionType === 'OUT' ? 'white' : 'transparent',
                   color:
-                    selectedTransactionType === "OUT" ? "#1976d2" : "white",
-                  borderColor: "white",
-                  "&:hover": {
+                    selectedTransactionType === 'OUT' ? '#1976d2' : 'white',
+                  borderColor: 'white',
+                  '&:hover': {
                     backgroundColor:
-                      selectedTransactionType === "OUT"
-                        ? "rgba(255,255,255,0.9)"
-                        : "rgba(255,255,255,0.1)",
-                    borderColor: "white",
+                      selectedTransactionType === 'OUT'
+                        ? 'rgba(255,255,255,0.9)'
+                        : 'rgba(255,255,255,0.1)',
+                    borderColor: 'white',
                   },
                 }}
               >
@@ -503,47 +605,146 @@ const BarcodeScanner = () => {
         <Grid item xs={12} md={8}>
           <Card>
             <CardContent>
-              <Box sx={{ display: "flex", alignItems: "center", mb: 3 }}>
-                <QrCodeScanner sx={{ mr: 1, color: "primary.main" }} />
+              <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
+                <QrCodeScanner sx={{ mr: 1, color: 'primary.main' }} />
                 <Typography variant="h5">Scan or Enter Barcode</Typography>
               </Box>
 
               <form onSubmit={handleBarcodeSubmit}>
-                <Box sx={{ display: "flex", gap: 2, mb: 3 }}>
-                  <TextField
-                    inputRef={inputRef}
-                    fullWidth
-                    label="Barcode Scanner / Manual Entry"
-                    value={barcodeInput}
-                    onChange={handleBarcodeInputChange}
-                    onKeyPress={handleKeyPress}
-                    placeholder="Scan barcode with USB scanner OR type manually..."
-                    disabled={isScanning || lookupMutation.isLoading}
-                    InputProps={{
-                      startAdornment: (
-                        <QrCodeScanner sx={{ color: "action.active", mr: 1 }} />
-                      ),
-                      onClick: handleInputClick,
+                <Box
+                  sx={{
+                    display: 'flex',
+                    gap: 2,
+                    mb: 2,
+                    alignItems: isBulkMode ? 'stretch' : 'flex-start',
+                  }}
+                >
+                  <Box sx={{ flex: 1 }}>
+                    <TextField
+                      inputRef={inputRef}
+                      fullWidth
+                      label="Barcode Scanner / Manual Entry"
+                      value={barcodeInput}
+                      onChange={handleBarcodeInputChange}
+                      onKeyPress={handleKeyPress}
+                      placeholder={
+                        isBulkMode
+                          ? 'Enter multiple barcodes separated by spaces...'
+                          : 'Scan barcode with USB scanner OR type manually...'
+                      }
+                      disabled={
+                        isScanning ||
+                        lookupMutation.isLoading ||
+                        isProcessingBulk
+                      }
+                      size="medium"
+                      InputProps={{
+                        startAdornment: (
+                          <QrCodeScanner
+                            sx={{ color: 'action.active', mr: 1 }}
+                          />
+                        ),
+                        onClick: handleInputClick,
+                      }}
+                      helperText={
+                        isBulkMode
+                          ? 'Enter multiple barcodes separated by spaces'
+                          : 'Use USB scanner or type barcode number manually'
+                      }
+                    />
+                  </Box>
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      alignItems: isBulkMode ? 'center' : 'flex-end',
+                      pb: isBulkMode ? 0 : 0,
+                      height: isBulkMode ? '100%' : '56.5px',
+                      alignSelf: isBulkMode ? 'stretch' : 'auto',
                     }}
-                    helperText="Use USB scanner or type barcode number manually"
-                  />
-                  <Button
-                    type="submit"
-                    variant="contained"
-                    disabled={
-                      !barcodeInput.trim() ||
-                      isScanning ||
-                      lookupMutation.isLoading
-                    }
-                    sx={{ minWidth: 120, height: 56 }}
-                    startIcon={<Search />}
                   >
-                    {isScanning || lookupMutation.isLoading ? (
-                      <LoadingSpinner size={20} />
-                    ) : (
-                      "PROCESS"
-                    )}
+                    <Button
+                      type="submit"
+                      variant="contained"
+                      disabled={
+                        !barcodeInput.trim() ||
+                        isScanning ||
+                        lookupMutation.isLoading ||
+                        isProcessingBulk
+                      }
+                      size="large"
+                      sx={{
+                        minWidth: 120,
+                        height: '56.5px',
+                        minHeight: '56.5px',
+                        maxHeight: '56.5px',
+                      }}
+                      startIcon={<Search />}
+                    >
+                      {isScanning ||
+                      lookupMutation.isLoading ||
+                      isProcessingBulk ? (
+                        <LoadingSpinner size={20} />
+                      ) : (
+                        'PROCESS'
+                      )}
+                    </Button>
+                  </Box>
+                </Box>
+                <Box
+                  sx={{
+                    mb: 3,
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: 2,
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <Button
+                    variant={isBulkMode ? 'contained' : 'outlined'}
+                    size="small"
+                    onClick={() => {
+                      setIsBulkMode(!isBulkMode);
+                      setBulkResults(null);
+                      setBarcodeInput('');
+                      // Reset date to today when toggling modes
+                      setTransactionDate(
+                        new Date().toISOString().split('T')[0],
+                      );
+                    }}
+                    sx={{ minWidth: 120, height: '40px' }}
+                  >
+                    {isBulkMode ? 'Single Mode' : 'Bulk Mode'}
                   </Button>
+                  {isBulkMode && (
+                    <>
+                      <TextField
+                        label="Transaction Date"
+                        type="date"
+                        value={transactionDate}
+                        onChange={(e) => setTransactionDate(e.target.value)}
+                        size="small"
+                        InputLabelProps={{ shrink: true }}
+                        sx={{
+                          minWidth: 180,
+                          '& .MuiInputBase-root': {
+                            height: '40px',
+                          },
+                          '& .MuiFormHelperText-root': {
+                            marginTop: 0.5,
+                            marginBottom: 0,
+                          },
+                        }}
+                        helperText="Select date for transaction (defaults to today)"
+                      />
+                      <Typography
+                        variant="body2"
+                        color="text.secondary"
+                        sx={{ flex: 1, alignSelf: 'center' }}
+                      >
+                        Paste multiple barcodes separated by spaces
+                      </Typography>
+                    </>
+                  )}
                 </Box>
               </form>
 
@@ -553,37 +754,159 @@ const BarcodeScanner = () => {
                   <strong>Scanner Instructions:</strong>
                   <br />
                   • Select Stock IN or Stock OUT mode above
-                  <br />• <strong>Method 1:</strong> Scan barcode with USB
-                  scanner (auto-processes on Enter)
-                  <br />• <strong>Method 2:</strong> Type barcode number
-                  manually and click PROCESS
-                  <br />•{" "}
+                  <br />• <strong>Single Mode:</strong> Scan barcode with USB
+                  scanner (auto-processes on Enter) or type manually
+                  <br /> • <strong>Bulk Mode:</strong> Toggle "Bulk Mode" button
+                  to enable bulk processing. Paste multiple barcodes separated
+                  by spaces. Use the date picker to select transaction date
+                  (defaults to today if not selected)
+                  <br />•{' '}
                   <strong>Only system-generated barcodes are accepted</strong>
                   <br />
-                  • System will automatically process the transaction
+                  • System will automatically process the transaction(s)
                   <br />
                   • Duplicate operations are prevented (5-minute cooldown per
                   transaction type)
                   <br />
                   • Duplicate stock-in entries are prevented
                   <br />• Input field auto-focuses for continuous scanning
+                  <br />• Bulk operations support up to 100 barcodes at once
                 </Typography>
               </Alert>
 
               {/* Loading State */}
               {(isScanning ||
                 lookupMutation.isLoading ||
-                stockUpdateMutation.isLoading) && (
+                stockUpdateMutation.isLoading ||
+                isProcessingBulk) && (
                 <Box
-                  sx={{ display: "flex", alignItems: "center", gap: 2, mb: 2 }}
+                  sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}
                 >
                   <LoadingSpinner size={20} />
                   <Typography variant="body2">
-                    {isScanning || lookupMutation.isLoading
-                      ? "Looking up barcode..."
-                      : "Processing transaction..."}
+                    {isProcessingBulk
+                      ? 'Processing bulk operation...'
+                      : isScanning || lookupMutation.isLoading
+                      ? 'Looking up barcode...'
+                      : 'Processing transaction...'}
                   </Typography>
                 </Box>
+              )}
+
+              {/* Bulk Results */}
+              {bulkResults && (
+                <Card
+                  sx={{
+                    mt: 2,
+                    border: '1px solid',
+                    borderColor:
+                      bulkResults.summary.failed === 0
+                        ? 'success.main'
+                        : bulkResults.summary.successful === 0
+                        ? 'error.main'
+                        : 'warning.main',
+                  }}
+                >
+                  <CardContent>
+                    <Typography variant="h6" gutterBottom>
+                      Bulk Operation Results
+                    </Typography>
+                    <Box sx={{ mb: 2 }}>
+                      <Typography variant="body2" color="text.secondary">
+                        Total: {bulkResults.summary.total} | Successful:{' '}
+                        <span style={{ color: '#2e7d32' }}>
+                          {bulkResults.summary.successful}
+                        </span>{' '}
+                        | Failed:{' '}
+                        <span style={{ color: '#d32f2f' }}>
+                          {bulkResults.summary.failed}
+                        </span>
+                      </Typography>
+                    </Box>
+                    {bulkResults.failed.length > 0 && (
+                      <Box sx={{ mb: 2 }}>
+                        <Typography
+                          variant="subtitle2"
+                          color="error"
+                          gutterBottom
+                        >
+                          Failed Barcodes ({bulkResults.failed.length}):
+                        </Typography>
+                        <List dense>
+                          {bulkResults.failed.slice(0, 10).map((item, idx) => (
+                            <ListItem key={idx} sx={{ px: 0, py: 0.5 }}>
+                              <ListItemText
+                                primary={
+                                  <Typography variant="body2">
+                                    {item.barcode}
+                                  </Typography>
+                                }
+                                secondary={
+                                  <Typography variant="caption" color="error">
+                                    {item.error}
+                                  </Typography>
+                                }
+                              />
+                            </ListItem>
+                          ))}
+                          {bulkResults.failed.length > 10 && (
+                            <Typography
+                              variant="caption"
+                              color="text.secondary"
+                            >
+                              ... and {bulkResults.failed.length - 10} more
+                            </Typography>
+                          )}
+                        </List>
+                      </Box>
+                    )}
+                    {bulkResults.successful.length > 0 && (
+                      <Box>
+                        <Typography
+                          variant="subtitle2"
+                          color="success.main"
+                          gutterBottom
+                        >
+                          Successful Barcodes ({bulkResults.successful.length}):
+                        </Typography>
+                        <List dense>
+                          {bulkResults.successful
+                            .slice(0, 10)
+                            .map((item, idx) => (
+                              <ListItem key={idx} sx={{ px: 0, py: 0.5 }}>
+                                <ListItemText
+                                  primary={
+                                    <Typography variant="body2">
+                                      {item.barcode} - {item.product.name}
+                                    </Typography>
+                                  }
+                                  secondary={
+                                    <Typography
+                                      variant="caption"
+                                      color="text.secondary"
+                                    >
+                                      Stock{' '}
+                                      {item.transaction.type.toUpperCase()} |{' '}
+                                      {item.transaction.previousStock} →{' '}
+                                      {item.transaction.newStock}
+                                    </Typography>
+                                  }
+                                />
+                              </ListItem>
+                            ))}
+                          {bulkResults.successful.length > 10 && (
+                            <Typography
+                              variant="caption"
+                              color="text.secondary"
+                            >
+                              ... and {bulkResults.successful.length - 10} more
+                            </Typography>
+                          )}
+                        </List>
+                      </Box>
+                    )}
+                  </CardContent>
+                </Card>
               )}
 
               {/* Scanned Product Display */}
@@ -591,15 +914,15 @@ const BarcodeScanner = () => {
                 <Card
                   sx={{
                     mt: 2,
-                    border: "1px solid",
-                    borderColor: "primary.main",
+                    border: '1px solid',
+                    borderColor: 'primary.main',
                   }}
                 >
                   <CardContent>
                     <Typography variant="h6" gutterBottom>
                       Scanned Product
                     </Typography>
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                       <Avatar
                         src={scannedProduct.product?.image_url}
                         sx={{ width: 60, height: 60 }}
@@ -608,23 +931,23 @@ const BarcodeScanner = () => {
                       </Avatar>
                       <Box sx={{ flex: 1 }}>
                         <Typography variant="h6">
-                          {scannedProduct.product?.name || "Unknown Product"}
+                          {scannedProduct.product?.name || 'Unknown Product'}
                         </Typography>
                         <Typography variant="body2" color="text.secondary">
-                          SKU: {scannedProduct.product?.sku || "N/A"}
+                          SKU: {scannedProduct.product?.sku || 'N/A'}
                         </Typography>
                         <Typography variant="body2" color="text.secondary">
-                          Barcode: {scannedProduct.barcode?.barcode || "N/A"}
+                          Barcode: {scannedProduct.barcode?.barcode || 'N/A'}
                         </Typography>
                       </Box>
                       <Chip
                         label={`${
-                          selectedTransactionType === "IN"
-                            ? "Stock IN"
-                            : "Stock OUT"
+                          selectedTransactionType === 'IN'
+                            ? 'Stock IN'
+                            : 'Stock OUT'
                         } Ready`}
                         color={
-                          selectedTransactionType === "IN" ? "success" : "error"
+                          selectedTransactionType === 'IN' ? 'success' : 'error'
                         }
                         variant="filled"
                       />
@@ -642,21 +965,21 @@ const BarcodeScanner = () => {
             <CardContent>
               <Box
                 sx={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
                   mb: 2,
                 }}
               >
                 <Typography variant="h6">
-                  <Inventory sx={{ mr: 1, verticalAlign: "middle" }} />
+                  <Inventory sx={{ mr: 1, verticalAlign: 'middle' }} />
                   Scanning Stats (Last 7 Days)
                 </Typography>
                 <Button
                   size="small"
                   onClick={() => {
-                    queryClient.invalidateQueries("scan-stats");
-                    queryClient.invalidateQueries("scan-history");
+                    queryClient.invalidateQueries('scan-stats');
+                    queryClient.invalidateQueries('scan-history');
                   }}
                   disabled={scanStatsLoading || scanHistoryLoading}
                 >
@@ -664,14 +987,14 @@ const BarcodeScanner = () => {
                 </Button>
               </Box>
               {scanStatsLoading ? (
-                <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
                   <LoadingSpinner size={24} />
                 </Box>
               ) : scanStatsError ? (
                 <Alert severity="error" sx={{ mb: 2 }}>
-                  Error loading stats:{" "}
+                  Error loading stats:{' '}
                   {scanStatsError.response?.status === 401
-                    ? "Please log in to view statistics"
+                    ? 'Please log in to view statistics'
                     : scanStatsError.message}
                 </Alert>
               ) : (
@@ -717,18 +1040,18 @@ const BarcodeScanner = () => {
           <Card>
             <CardContent>
               <Typography variant="h6" gutterBottom>
-                <History sx={{ mr: 1, verticalAlign: "middle" }} />
+                <History sx={{ mr: 1, verticalAlign: 'middle' }} />
                 Recent Scans
               </Typography>
               {scanHistoryLoading ? (
-                <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
                   <LoadingSpinner size={24} />
                 </Box>
               ) : scanHistoryError ? (
                 <Alert severity="error" sx={{ mb: 2 }}>
-                  Error loading scan history:{" "}
+                  Error loading scan history:{' '}
                   {scanHistoryError.response?.status === 401
-                    ? "Please log in to view scan history"
+                    ? 'Please log in to view scan history'
                     : scanHistoryError.message}
                 </Alert>
               ) : scanHistory.length === 0 ? (
@@ -743,15 +1066,15 @@ const BarcodeScanner = () => {
                         <Avatar
                           sx={{
                             bgcolor:
-                              scan.type === "in"
-                                ? "success.main"
-                                : "error.main",
+                              scan.type === 'in'
+                                ? 'success.main'
+                                : 'error.main',
                             mr: 2,
                             width: 32,
                             height: 32,
                           }}
                         >
-                          {scan.type === "in" ? (
+                          {scan.type === 'in' ? (
                             <Add fontSize="small" />
                           ) : (
                             <Remove fontSize="small" />
@@ -760,7 +1083,7 @@ const BarcodeScanner = () => {
                         <ListItemText
                           primary={
                             <Typography variant="body2">
-                              {scan.product_name || "Unknown Product"}
+                              {scan.product_name || 'Unknown Product'}
                             </Typography>
                           }
                           secondary={
@@ -768,8 +1091,8 @@ const BarcodeScanner = () => {
                               variant="caption"
                               color="text.secondary"
                             >
-                              {scan.type === "in" ? "Stock IN" : "Stock OUT"} •{" "}
-                              {scan.quantity} units •{" "}
+                              {scan.type === 'in' ? 'Stock IN' : 'Stock OUT'} •{' '}
+                              {scan.quantity} units •{' '}
                               {new Date(scan.created_at).toLocaleTimeString()}
                             </Typography>
                           }

@@ -1164,35 +1164,29 @@ router.delete(
         });
       }
 
-      // Check if product has any transactions
-      const [transactionCount] = await connection.execute(
-        'SELECT COUNT(*) as count FROM transactions WHERE product_id = ?',
-        [id],
-      );
-
-      if (parseInt(transactionCount[0].count) > 0) {
-        await connection.rollback();
-        connection.release();
-        return res.status(400).json({
-          success: false,
-          message: 'Cannot delete product with existing transactions',
-        });
-      }
-
-      // Clean up product images from database
+      // Admin can delete products with transactions - delete related records first
       const product = existingProduct[0];
+      
+      // Clean up product images from database
       if (product.images && product.images.length > 0) {
         const imageIds = JSON.parse(product.images);
         await cleanupOldImages(imageIds);
       }
 
-      // Delete related records first
+      // Delete related records first (in correct order to maintain referential integrity)
+      // Delete transactions first (they reference barcodes and products)
+      await connection.execute('DELETE FROM transactions WHERE product_id = ?', [
+        id,
+      ]);
+      // Delete barcodes (they reference products)
       await connection.execute('DELETE FROM barcodes WHERE product_id = ?', [
         id,
       ]);
+      // Delete inventory records
       await connection.execute('DELETE FROM inventory WHERE product_id = ?', [
         id,
       ]);
+      // Finally delete the product
       await connection.execute('DELETE FROM products WHERE id = ?', [id]);
 
       await connection.commit();

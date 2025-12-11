@@ -713,4 +713,303 @@ router.get("/activity", authenticateToken, async (req, res) => {
   }
 });
 
+// Bulk stock update via barcode scan
+router.post("/bulk-update-stock", authenticateToken, async (req, res) => {
+  let connection;
+  try {
+    let { barcodes, type, quantity = 1, notes = "", transaction_date } = req.body;
+    
+    // Use provided date or current date/time
+    // If transaction_date is provided, use it with current time; otherwise use NOW()
+    let transactionDateTime = null;
+    if (transaction_date) {
+      // Validate date format (should be YYYY-MM-DD)
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRegex.test(transaction_date)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid date format. Expected YYYY-MM-DD",
+        });
+      }
+      // Use the provided date with current time
+      const now = new Date();
+      const timeString = now.toTimeString().split(' ')[0]; // HH:MM:SS
+      transactionDateTime = `${transaction_date} ${timeString}`;
+    }
+
+    if (!Array.isArray(barcodes) || barcodes.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Barcodes array is required",
+      });
+    }
+
+    // Clean and trim all barcodes, filter out empty ones
+    barcodes = barcodes
+      .map((b) => String(b).trim())
+      .filter((b) => b.length > 0);
+
+    if (barcodes.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No valid barcodes provided",
+      });
+    }
+
+    if (!["in", "out"].includes(type)) {
+      return res.status(400).json({
+        success: false,
+        message: "Type must be 'in' or 'out'",
+      });
+    }
+
+    if (barcodes.length > 100) {
+      return res.status(400).json({
+        success: false,
+        message: "Maximum 100 barcodes allowed per request",
+      });
+    }
+
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    const results = {
+      successful: [],
+      failed: [],
+      summary: {
+        total: barcodes.length,
+        successful: 0,
+        failed: 0,
+      },
+    };
+
+    // OPTIMIZED: Batch fetch all barcodes in a single query
+    const placeholders = barcodes.map(() => "?").join(",");
+    const [barcodeRows] = await connection.execute(
+      `
+      SELECT 
+        b.*,
+        p.name as product_name,
+        p.sku as product_sku,
+        p.stock_quantity as current_stock
+      FROM barcodes b
+      JOIN products p ON b.product_id = p.id
+      WHERE b.barcode IN (${placeholders})
+    `,
+      barcodes
+    );
+
+    // Create a map for quick lookup
+    const barcodeMap = new Map();
+    barcodeRows.forEach((row) => {
+      barcodeMap.set(row.barcode, row);
+    });
+
+    // Track which barcodes were found
+    const foundBarcodes = new Set(barcodeRows.map((row) => row.barcode));
+
+    // Validate and categorize barcodes
+    const validBarcodes = [];
+    const invalidBarcodes = [];
+
+    for (const barcode of barcodes) {
+      if (!foundBarcodes.has(barcode)) {
+        results.failed.push({
+          barcode,
+          error: "Barcode not found",
+        });
+        invalidBarcodes.push(barcode);
+        continue;
+      }
+
+      const barcodeData = barcodeMap.get(barcode);
+
+      // Validate based on type
+      if (type === "in") {
+        if (barcodeData.is_stocked_in) {
+          results.failed.push({
+            barcode,
+            error: "Already stocked in",
+            product: {
+              name: barcodeData.product_name,
+              sku: barcodeData.product_sku,
+            },
+          });
+          invalidBarcodes.push(barcode);
+          continue;
+        }
+      } else if (type === "out") {
+        if (!barcodeData.is_stocked_in) {
+          results.failed.push({
+            barcode,
+            error: "Not currently stocked in",
+            product: {
+              name: barcodeData.product_name,
+              sku: barcodeData.product_sku,
+            },
+          });
+          invalidBarcodes.push(barcode);
+          continue;
+        }
+
+        if (barcodeData.current_stock < quantity) {
+          results.failed.push({
+            barcode,
+            error: `Insufficient stock (current: ${barcodeData.current_stock}, requested: ${quantity})`,
+            product: {
+              name: barcodeData.product_name,
+              sku: barcodeData.product_sku,
+            },
+          });
+          invalidBarcodes.push(barcode);
+          continue;
+        }
+      }
+
+      validBarcodes.push({
+        barcode,
+        data: barcodeData,
+      });
+    }
+
+    if (validBarcodes.length === 0) {
+      await connection.rollback();
+      results.summary.successful = 0;
+      results.summary.failed = results.failed.length;
+      return res.json({
+        success: true,
+        message: `Bulk operation completed: 0 successful, ${results.summary.failed} failed`,
+        data: results,
+      });
+    }
+
+    // OPTIMIZED: Batch insert transactions
+    const referenceNumber = `BULK_SCAN_${Date.now()}`;
+    
+    // Use provided transaction_date or NOW()
+    const createdAtValue = transactionDateTime ? "?" : "NOW()";
+    const updatedAtValue = transactionDateTime ? "?" : "NOW()";
+    
+    const transactionValues = validBarcodes
+      .map(() => `(?, ?, ?, ?, ?, ?, ?, ${createdAtValue}, ${updatedAtValue})`)
+      .join(", ");
+    
+    const transactionParams = validBarcodes.flatMap((item) => {
+      const baseParams = [
+        item.data.product_id,
+        item.data.id,
+        type,
+        quantity,
+        referenceNumber,
+        `${notes} | Barcode: ${item.barcode}`,
+        req.user.id,
+      ];
+      
+      // Add date/time if provided
+      if (transactionDateTime) {
+        baseParams.push(transactionDateTime, transactionDateTime);
+      }
+      
+      return baseParams;
+    });
+
+    const [transactionResult] = await connection.execute(
+      `
+      INSERT INTO transactions (
+        product_id, 
+        barcode_id,
+        type, 
+        quantity, 
+        reference_number, 
+        notes, 
+        user_id, 
+        created_at, 
+        updated_at
+      ) VALUES ${transactionValues}
+    `,
+      transactionParams
+    );
+
+    // OPTIMIZED: Batch update barcodes
+    const unitsToAssign = Math.max(quantity || 1, 1);
+    const validBarcodeList = validBarcodes.map((item) => item.barcode);
+    const updatePlaceholders = validBarcodeList.map(() => "?").join(",");
+
+    if (type === "in") {
+      await connection.execute(
+        `
+        UPDATE barcodes 
+        SET is_stocked_in = TRUE, units_assigned = ?, updated_at = NOW() 
+        WHERE barcode IN (${updatePlaceholders})
+      `,
+        [unitsToAssign, ...validBarcodeList]
+      );
+    } else if (type === "out") {
+      await connection.execute(
+        `
+        UPDATE barcodes 
+        SET is_stocked_in = FALSE, units_assigned = 0, updated_at = NOW() 
+        WHERE barcode IN (${updatePlaceholders})
+      `,
+        validBarcodeList
+      );
+    }
+
+    // OPTIMIZED: Ensure stock consistency only once per unique product_id
+    const uniqueProductIds = [
+      ...new Set(validBarcodes.map((item) => item.data.product_id)),
+    ];
+    for (const productId of uniqueProductIds) {
+      await ensureStockConsistency(connection, productId);
+    }
+
+    // Build successful results
+    let insertId = transactionResult.insertId;
+    validBarcodes.forEach((item) => {
+      const currentStock = item.data.current_stock;
+      const newStock =
+        type === "in" ? currentStock + quantity : currentStock - quantity;
+
+      results.successful.push({
+        barcode: item.barcode,
+        product: {
+          name: item.data.product_name,
+          sku: item.data.product_sku,
+        },
+        transaction: {
+          type,
+          quantity,
+          previousStock: currentStock,
+          newStock,
+        },
+        transactionId: insertId++,
+      });
+    });
+
+    results.summary.successful = results.successful.length;
+    results.summary.failed = results.failed.length;
+
+    await connection.commit();
+
+    res.json({
+      success: true,
+      message: `Bulk operation completed: ${results.summary.successful} successful, ${results.summary.failed} failed`,
+      data: results,
+    });
+  } catch (error) {
+    if (connection) {
+      await connection.rollback();
+    }
+    console.error("Bulk stock update error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  } finally {
+    if (connection) {
+      connection.release();
+    }
+  }
+});
+
 module.exports = router;

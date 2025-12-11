@@ -230,6 +230,8 @@ build/
 # Backup files
 *.backup
 *.bak
+backups/
+server/backups/
 
 # OS generated files
 .DS_Store

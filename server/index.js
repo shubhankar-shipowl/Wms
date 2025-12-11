@@ -9,6 +9,7 @@ const errorHandler = require("./middleware/errorHandler");
 const dbHealthCheck = require("./middleware/dbHealthCheck");
 const { recordRequestMetrics } = require("./middleware/warehouseMonitor");
 const { pool } = require("./config/database");
+const { initializeBackupCron } = require("./services/backupService");
 require("dotenv").config();
 
 const app = express();
@@ -225,6 +226,13 @@ server.listen(PORT, async () => {
   const dbConnected = await testDatabaseConnection();
   if (!dbConnected) {
     console.error("❌ Server started but database connection failed!");
+  }
+
+  // Initialize database backup cron job (runs daily at 2 AM IST)
+  try {
+    initializeBackupCron();
+  } catch (error) {
+    console.error("❌ Failed to initialize backup cron job:", error);
   }
 
   // Update database schema on startup

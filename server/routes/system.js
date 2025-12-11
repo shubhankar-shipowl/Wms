@@ -3,6 +3,7 @@ const pool = require("../config/database");
 const cache = require("../config/cache");
 const { authenticateToken, requireRole } = require("../middleware/auth");
 const { warehouseMonitor } = require("../middleware/warehouseMonitor");
+const { runBackupNow } = require("../services/backupService");
 
 const router = express.Router();
 
@@ -241,5 +242,44 @@ function formatUptime(ms) {
   if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
   return `${seconds}s`;
 }
+
+// Manual database backup endpoint (admin only)
+router.post(
+  "/backup",
+  authenticateToken,
+  requireRole(["admin"]),
+  async (req, res) => {
+    try {
+      console.log("[BACKUP] Manual backup triggered by user:", req.user.username);
+      const result = await runBackupNow();
+
+      if (result.success) {
+        res.json({
+          success: true,
+          message: "Backup created successfully",
+          data: {
+            fileName: result.fileName,
+            filePath: result.filePath,
+            size: result.size,
+            sizeMB: (result.size / 1024 / 1024).toFixed(2),
+          },
+        });
+      } else {
+        res.status(500).json({
+          success: false,
+          message: "Backup failed",
+          error: result.error,
+        });
+      }
+    } catch (error) {
+      console.error("[BACKUP] Manual backup error:", error);
+      res.status(500).json({
+        success: false,
+        message: "Backup failed",
+        error: error.message,
+      });
+    }
+  }
+);
 
 module.exports = router;
