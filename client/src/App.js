@@ -15,6 +15,7 @@ import BarcodeScanner from "./pages/BarcodeScanner";
 import Alerts from "./pages/Alerts";
 import Reports from "./pages/Reports";
 import Settings from "./pages/Settings";
+import Reconciliation from "./pages/Reconciliation";
 import LoadingSpinner from "./components/Common/LoadingSpinner";
 
 function App() {
@@ -48,6 +49,7 @@ function App() {
           <Route path="/transactions" element={<Transactions />} />
           <Route path="/barcodes" element={<Barcodes />} />
           <Route path="/scanner" element={<BarcodeScanner />} />
+          <Route path="/reconciliation" element={<Reconciliation />} />
           <Route path="/alerts" element={<Alerts />} />
           <Route path="/reports" element={<Reports />} />
           <Route path="/settings" element={<Settings />} />

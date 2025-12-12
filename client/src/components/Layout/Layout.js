@@ -29,7 +29,8 @@ import {
   Settings,
   AccountCircle,
   Logout,
-  Notifications
+  Notifications,
+  CompareArrows
 } from '@mui/icons-material';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
@@ -45,6 +46,7 @@ const menuItems = [
   { text: 'Inventory', icon: <Inventory />, path: '/inventory' },
   { text: 'Barcodes', icon: <QrCode />, path: '/barcodes' },
   { text: 'Scanner', icon: <QrCode />, path: '/scanner' },
+  { text: 'Reconciliation', icon: <CompareArrows />, path: '/reconciliation' },
   { text: 'Transactions', icon: <SwapHoriz />, path: '/transactions' },
   { text: 'Alerts', icon: <Warning />, path: '/alerts' },
   { text: 'Reports', icon: <Assessment />, path: '/reports' },

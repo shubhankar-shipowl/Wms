@@ -137,6 +137,7 @@ app.use("/api/direct-print", require("./routes/direct-print"));
 app.use("/api/stock", require("./routes/stock"));
 app.use("/api/system", require("./routes/system"));
 app.use("/api/update-barcodes", require("./routes/update-barcodes"));
+app.use("/api/reconciliation", require("./routes/reconciliation"));
 
 // Socket.IO connection handling
 io.on("connection", (socket) => {

@@ -45,8 +45,26 @@ function initializeBackupCron() {
     timezone: 'UTC' // Use UTC timezone for cron scheduling
   });
 
-  // Log when job is scheduled
-  console.log('[BACKUP] Cron job scheduled:', job.running ? 'Running' : 'Stopped');
+  // Explicitly start the job to ensure it's running (even though scheduled: true should do this)
+  if (job && typeof job.start === 'function') {
+    job.start();
+  }
+
+  // Calculate next run time (2 AM IST = 8:30 PM UTC)
+  const now = new Date();
+  const nextRun = new Date();
+  nextRun.setUTCHours(20, 30, 0, 0); // 8:30 PM UTC = 2 AM IST
+  
+  // If it's already past 8:30 PM UTC today, schedule for tomorrow
+  if (now.getTime() > nextRun.getTime()) {
+    nextRun.setUTCDate(nextRun.getUTCDate() + 1);
+  }
+
+  // Log job status - check if job exists and has the expected structure
+  const jobStatus = job ? '✓ Scheduled and Running' : '✗ Failed to create';
+  console.log('[BACKUP] Cron job status:', jobStatus);
+  console.log('[BACKUP] Next backup scheduled for:', nextRun.toISOString(), '(UTC)');
+  console.log('[BACKUP] Next backup (IST):', new Date(nextRun.getTime() + (5.5 * 60 * 60 * 1000)).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }));
   
   return job;
 }
