@@ -110,4 +110,5 @@ module.exports = {
   getTableName,
   getTablePrefix,
   getDatabaseName,
+  getDatabaseConfig,
 };
