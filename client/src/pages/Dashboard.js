@@ -209,7 +209,7 @@ const MetricCard = ({
 );
 
 const Dashboard = () => {
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const queryClient = useQueryClient();
   const [lastUpdated, setLastUpdated] = useState(new Date());
 
@@ -352,7 +352,7 @@ const Dashboard = () => {
 
       {/* Key Metrics */}
       <Grid container spacing={3} sx={{ mb: 3 }}>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid item xs={12} sm={6} md={isAdmin ? 3 : 4}>
           <MetricCard
             title="Total Products"
             value={metrics?.total_products || 0}
@@ -360,15 +360,17 @@ const Dashboard = () => {
             color="primary"
           />
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <MetricCard
-            title="Inventory Value"
-            value={`${(metrics?.total_inventory_value || 0).toLocaleString()}`}
-            icon={<CurrencyRupee fontSize="large" />}
-            color="success"
-          />
-        </Grid>
-        <Grid item xs={12} sm={6} md={3}>
+        {isAdmin && (
+          <Grid item xs={12} sm={6} md={3}>
+            <MetricCard
+              title="Inventory Value"
+              value={`${(metrics?.total_inventory_value || 0).toLocaleString()}`}
+              icon={<CurrencyRupee fontSize="large" />}
+              color="success"
+            />
+          </Grid>
+        )}
+        <Grid item xs={12} sm={6} md={isAdmin ? 3 : 4}>
           <MetricCard
             title="Active Alerts"
             value={metrics?.active_alerts || 0}
@@ -376,7 +378,7 @@ const Dashboard = () => {
             color="error"
           />
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid item xs={12} sm={6} md={isAdmin ? 3 : 4}>
           <MetricCard
             title="Today's Transactions"
             value={metrics?.today_transactions || 0}

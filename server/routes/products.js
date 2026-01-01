@@ -203,6 +203,330 @@ router.get('/export/csv', authenticateToken, requireRole(['admin']), async (req,
   }
 });
 
+// Export products catalog to PDF
+router.get('/catalog/pdf', authenticateToken, async (req, res) => {
+  try {
+    const { search, category, includeQty } = req.query;
+    const showQuantity = includeQty === 'true';
+
+    const params = [];
+    const conditions = [];
+
+    let query = `
+      SELECT 
+        p.id,
+        p.name,
+        p.sku,
+        p.price,
+        p.category,
+        p.stock_quantity,
+        p.images,
+        p.hsn_code,
+        p.gst_rate
+      FROM products p
+    `;
+
+    if (search) {
+      conditions.push('(p.name LIKE ? OR p.sku LIKE ?)');
+      const searchTerm = `%${search}%`;
+      params.push(searchTerm, searchTerm);
+    }
+
+    if (category) {
+      conditions.push('p.category = ?');
+      params.push(category);
+    }
+
+    if (conditions.length > 0) {
+      query += ' WHERE ' + conditions.join(' AND ');
+    }
+
+    // Order by category, then by name
+    query += ' ORDER BY p.category ASC, p.name ASC';
+
+    const [products] = await pool.execute(query, params);
+
+    if (products.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No products found to generate catalog',
+      });
+    }
+
+    // Create PDF
+    const doc = new PDFDocument({ 
+      size: 'A4',
+      margin: 50,
+      layout: 'portrait'
+    });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="products_catalog_${new Date().toISOString().split('T')[0]}.pdf"`,
+    );
+
+    doc.pipe(res);
+
+    const pageWidth = 595; // A4 width in points
+    const pageHeight = 842; // A4 height in points
+    const margin = 50;
+    const contentWidth = pageWidth - margin * 2;
+
+    // --- First page: Use provided image as full-page background ---
+    try {
+      const heroPath = path.join(__dirname, '..', '..', 'WhatsApp Image 2025-12-22 at 5.34.28 PM.jpeg');
+      if (fs.existsSync(heroPath)) {
+        doc.image(heroPath, 0, 0, {
+          width: pageWidth,
+          height: pageHeight,
+        });
+      } else {
+        console.warn('Hero image not found at expected path:', heroPath);
+      }
+    } catch (heroErr) {
+      console.warn('Failed to load hero image for first page:', heroErr);
+    }
+
+    // Helper function to add logo watermark to current page
+    const addWatermark = () => {
+      try {
+        const logoPath = path.join(__dirname, '..', '..', 'Buzwidelogo.png');
+        if (fs.existsSync(logoPath)) {
+          doc.save();
+          // Set opacity for watermark effect (0.15 = clearer but still subtle)
+          doc.opacity(0.15);
+          // Increased logo size for watermark
+          const logoWidth = 250;
+          // Position logo more to the left and center vertically
+          const logoX = pageWidth / 4; // Positioned more to the left
+          const logoY = (pageHeight - logoWidth) / 2;
+          // Rotate the logo -45 degrees (left tilt)
+          doc.rotate(-45, { origin: [logoX + logoWidth / 2, logoY + logoWidth / 2] });
+          doc.image(logoPath, logoX, logoY, {
+            width: logoWidth,
+            height: logoWidth,
+          });
+          doc.restore();
+        }
+      } catch (watermarkError) {
+        console.warn('Failed to add watermark:', watermarkError);
+      }
+    };
+
+    // Start products on page 2
+    doc.addPage();
+    addWatermark(); // Add watermark to page 2
+    
+    // Start grid content from top of page 2
+    let yPosition = 50;
+    const productsPerRow = 3; // Reduced from 4 to make cards wider
+    const spacing = 10; // Space between products horizontally
+    const rowSpacing = 15; // Space between rows vertically
+    const cardWidth = (contentWidth - (spacing * (productsPerRow - 1))) / productsPerRow;
+    const cardMargin = 5;
+    const imageWidth = cardWidth - (cardMargin * 2); // Full width minus margins
+    const imageHeight = imageWidth; // Square image
+    const cardHeight = 130; // Height adjusted for product name and price only
+    const rowHeight = cardHeight + rowSpacing;
+
+    // Group products by category
+    const productsByCategory = {};
+    products.forEach(product => {
+      const cat = product.category || 'Uncategorized';
+      if (!productsByCategory[cat]) {
+        productsByCategory[cat] = [];
+      }
+      productsByCategory[cat].push(product);
+    });
+
+    // Helper function to draw a product card
+    const drawProductCard = async (product, x, y) => {
+      // No card border - removed for cleaner design
+
+      // Center image horizontally within card
+      const imageX = x;
+      const imageY = y;
+      const textX = x;
+      const textWidth = cardWidth;
+      
+      // Calculate image height to leave room for text (name, price)
+      const maxImageHeight = cardHeight - 50; // Reserve space for text content (name, price)
+      const actualImageHeight = Math.min(imageHeight, maxImageHeight);
+      const textY = imageY + actualImageHeight + 6;
+
+      // Product image - using full card width with high quality
+      let imageAdded = false;
+      if (product.images) {
+        try {
+          const imageIds = JSON.parse(product.images);
+          if (imageIds.length > 0 && imageIds[0]) {
+            // Use 'full' instead of 'thumbnail' for better image quality
+            const imageData = await getImageData(imageIds[0], 'full');
+            if (imageData && imageData.data) {
+              const imageBuffer = Buffer.isBuffer(imageData.data) 
+                ? imageData.data 
+                : Buffer.from(imageData.data);
+              
+              try {
+                // Render image centered horizontally and vertically within card (fully opaque)
+                doc.image(imageBuffer, imageX, imageY, {
+                  width: cardWidth,
+                  height: actualImageHeight,
+                  fit: [cardWidth, actualImageHeight],
+                  align: 'center',
+                  valign: 'center',
+                });
+                imageAdded = true;
+              } catch (imageRenderError) {
+                console.error('Error rendering image in PDF for product:', product.id, imageRenderError);
+              }
+            }
+          }
+        } catch (imageError) {
+          console.error('Error loading image for product:', product.id, imageError);
+        }
+      }
+      
+      // Draw placeholder text if no image - no border for cleaner design
+      if (!imageAdded) {
+        doc.fontSize(7)
+           .fillColor('#999999')
+           .text('No Image', imageX, imageY + actualImageHeight / 2 - 5, {
+             width: cardWidth,
+             align: 'center'
+           });
+      }
+
+      // Product Name - centered
+      doc.fontSize(9)
+         .font('Helvetica-Bold')
+         .fillColor('#000000');
+      const nameHeight = doc.heightOfString(product.name || 'N/A', {
+        width: textWidth,
+        ellipsis: true,
+      });
+      doc.text(product.name || 'N/A', textX, textY, {
+        width: textWidth,
+        ellipsis: true,
+        align: 'center',
+      });
+
+      // Calculate offsets
+      let currentY = textY + nameHeight + 5;
+
+      // Quantity (only if includeQty is true)
+      if (showQuantity) {
+        doc.fontSize(8)
+           .font('Helvetica')
+           .fillColor('#666666')
+           .text(`Qty: ${product.stock_quantity || 0}`, textX, currentY, {
+             width: textWidth,
+             align: 'center',
+           });
+        currentY += 10;
+      }
+
+      // Price - format properly and centered (no currency symbol)
+      let priceValue = product.price;
+      if (priceValue != null) {
+        const priceStr = priceValue.toString().trim();
+        const numericStr = priceStr.replace(/[^0-9.]/g, '');
+        priceValue = parseFloat(numericStr);
+      }
+      priceValue = isNaN(priceValue) ? 0 : priceValue;
+      const formattedPrice = priceValue.toFixed(2);
+      
+      doc.fontSize(10)
+         .font('Helvetica-Bold')
+         .fillColor('#6755ff')
+         .text(formattedPrice, textX, currentY, {
+           width: textWidth,
+           align: 'center',
+         });
+    };
+
+    // Sort categories: non-empty first (alphabetically), "Uncategorized" last
+    const categoryEntries = Object.entries(productsByCategory).sort((a, b) => {
+      const aIsUncategorized = a[0] === 'Uncategorized';
+      const bIsUncategorized = b[0] === 'Uncategorized';
+      if (aIsUncategorized && !bIsUncategorized) return 1;
+      if (!aIsUncategorized && bIsUncategorized) return -1;
+      return a[0].localeCompare(b[0]);
+    });
+
+    // Process each category
+    for (const [categoryName, categoryProducts] of categoryEntries) {
+      // Check if we need a new page for category header
+      if (yPosition + 30 > pageHeight - 50) {
+        doc.addPage();
+        addWatermark(); // Add watermark to new page
+        yPosition = 50;
+      }
+
+      // Category header with light blue banner - matching design
+      const headerHeight = 28;
+      const headerRadius = 6;
+      const headerFill = '#e3f2fd'; // Light blue background
+      const headerText = '#1976d2'; // Darker blue text
+
+      doc
+        .save()
+        .fillColor(headerFill)
+        .roundedRect(margin, yPosition, contentWidth, headerHeight, headerRadius)
+        .fill();
+
+      doc
+        .fontSize(16)
+        .font('Helvetica-Bold')
+        .fillColor(headerText)
+        .text(categoryName.toUpperCase(), margin + 12, yPosition + 6, {
+          width: contentWidth - 24,
+        });
+
+      doc.restore();
+
+      yPosition += headerHeight + 12;
+
+      // Process products in rows of 4
+      for (let i = 0; i < categoryProducts.length; i += productsPerRow) {
+        // Check if we need a new page for this row
+        if (yPosition + rowHeight > pageHeight - 50) {
+          doc.addPage();
+          addWatermark(); // Add watermark to new page
+          yPosition = 50;
+        }
+
+        const rowProducts = categoryProducts.slice(i, i + productsPerRow);
+        
+        // Draw products in this row
+        for (let j = 0; j < rowProducts.length; j++) {
+          const product = rowProducts[j];
+          const x = margin + (j * (cardWidth + spacing));
+          await drawProductCard(product, x, yPosition);
+        }
+
+        // Move to next row with spacing
+        yPosition += rowHeight;
+      }
+
+      // Add spacing between categories
+      yPosition += 10;
+    }
+
+    doc.end();
+  } catch (error) {
+    console.error('Export products PDF catalog error:', error);
+    if (!res.headersSent) {
+      res.status(500).json({
+        success: false,
+        message: 'Failed to generate products catalog PDF',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      });
+    }
+  }
+});
+
 // Get all unique categories
 // Get next SKU (auto-increment)
 router.get('/next-sku', authenticateToken, async (req, res) => {
@@ -716,11 +1040,11 @@ router.post(
   },
 );
 
-// Update product (Admin only)
+// Update product (Admin and Manager can edit)
 router.put(
   '/:id',
   authenticateToken,
-  requireRole(['admin']),
+  requireRole(['admin', 'manager']),
   (req, res, next) => {
     upload(req, res, (err) => {
       if (err) {
@@ -831,25 +1155,36 @@ router.put(
         }
       }
 
-      // Handle image uploads
+      // Handle image uploads (managers cannot update images)
       let imageIds = [];
-      if (req.processedImages && req.processedImages.length > 0) {
-        // If new images are uploaded, replace existing ones
-        imageIds = await saveImagesToDatabase(id, req.processedImages);
+      const isManager = req.user.role === 'manager';
+      
+      if (!isManager) {
+        // Only non-managers can update images
+        if (req.processedImages && req.processedImages.length > 0) {
+          // If new images are uploaded, replace existing ones
+          imageIds = await saveImagesToDatabase(id, req.processedImages);
 
-        // Clean up old images
-        const currentProduct = existingProduct[0];
-        if (currentProduct.images) {
-          const oldImageIds = JSON.parse(currentProduct.images);
-          await cleanupOldImages(oldImageIds);
+          // Clean up old images
+          const currentProduct = existingProduct[0];
+          if (currentProduct.images) {
+            const oldImageIds = JSON.parse(currentProduct.images);
+            await cleanupOldImages(oldImageIds);
+          }
+        } else if (existingImageIds !== null) {
+          // If existing image IDs are provided (for keeping existing images)
+          imageIds = Array.isArray(existingImageIds)
+            ? existingImageIds.map((imgId) => parseInt(imgId)).filter((id) => !isNaN(id))
+            : [];
+        } else {
+          // Keep existing images if no new ones provided and no explicit IDs sent
+          const currentProduct = existingProduct[0];
+          if (currentProduct.images) {
+            imageIds = JSON.parse(currentProduct.images);
+          }
         }
-      } else if (existingImageIds !== null) {
-        // If existing image IDs are provided (for keeping existing images)
-        imageIds = Array.isArray(existingImageIds)
-          ? existingImageIds.map((imgId) => parseInt(imgId)).filter((id) => !isNaN(id))
-          : [];
       } else {
-        // Keep existing images if no new ones provided and no explicit IDs sent
+        // Managers: keep existing images unchanged
         const currentProduct = existingProduct[0];
         if (currentProduct.images) {
           imageIds = JSON.parse(currentProduct.images);
@@ -859,15 +1194,19 @@ router.put(
       // Build update query dynamically
       const updateFields = [];
       const values = [];
-
+      
       Object.keys(req.body).forEach((key) => {
         if (req.body[key] !== undefined && key !== 'images') {
+          // Managers can only update the name field
+          if (isManager && key !== 'name') {
+            return; // Skip this field for managers
+          }
           updateFields.push(`${key} = ?`);
           values.push(req.body[key]);
         }
       });
 
-      // Always update images
+      // Always update images (managers keep existing images)
       updateFields.push('images = ?');
       values.push(JSON.stringify(imageIds));
 

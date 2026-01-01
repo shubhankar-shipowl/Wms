@@ -256,6 +256,7 @@ const ProductCard = ({
   onDelete,
   onView,
   isAdmin,
+  canEdit,
 }) => {
   return (
     <Card
@@ -473,7 +474,7 @@ const ProductCard = ({
           <Visibility />
         </IconButton>
 
-        {isAdmin && (
+        {canEdit && (
           <IconButton
             size="small"
             onClick={() => onEdit(product)}
@@ -511,6 +512,9 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
   const [isCustomCategory, setIsCustomCategory] = useState(false);
   const [customCategoryValue, setCustomCategoryValue] = useState('');
   const [availableCategories, setAvailableCategories] = useState([]);
+  const { user, isAdmin } = useAuth();
+  const isManager = user?.role === 'manager';
+  const isManagerOnly = isManager && !isAdmin; // Manager but not admin
 
   const {
     register,
@@ -561,12 +565,12 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
     const fetchNextSku = async () => {
       try {
         // Small delay to ensure form reset completes first
-        await new Promise(resolve => setTimeout(resolve, 200));
+        await new Promise((resolve) => setTimeout(resolve, 200));
         const response = await axios.get('/api/products/next-sku');
         if (response.data.success && response.data.data.nextSku) {
-          setValue('sku', response.data.data.nextSku, { 
-            shouldValidate: false, 
-            shouldDirty: false 
+          setValue('sku', response.data.data.nextSku, {
+            shouldValidate: false,
+            shouldDirty: false,
           });
         }
       } catch (error) {
@@ -817,48 +821,55 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
   const onSubmit = (data) => {
     const formData = new FormData();
 
-    // Handle category - if custom, use custom value
-    const categoryValue =
-      data.category === 'custom' ? customCategoryValue.trim() : data.category;
-    if (categoryValue) {
-      formData.append('category', categoryValue);
+    // If manager is editing (not creating), only send name field
+    if (product && isManagerOnly) {
+      formData.append('name', data.name);
+    } else {
+      // Handle category - if custom, use custom value
+      const categoryValue =
+        data.category === 'custom' ? customCategoryValue.trim() : data.category;
+      if (categoryValue) {
+        formData.append('category', categoryValue);
+      }
+
+      // Append other form fields
+      Object.keys(data).forEach((key) => {
+        if (key !== 'category' && data[key] !== undefined && data[key] !== '') {
+          formData.append(key, data[key]);
+        }
+      });
     }
 
-    // Append other form fields
-    Object.keys(data).forEach((key) => {
-      if (key !== 'category' && data[key] !== undefined && data[key] !== '') {
-        formData.append(key, data[key]);
-      }
-    });
-
-    // Handle images for updates
-    if (product && selectedImages.length === 0) {
-      // If updating and no new images selected, send existing image IDs
-      if (product.images && Array.isArray(product.images)) {
-        const existingImageIds = product.images
-          .map((img) => {
-            if (typeof img === 'string') {
-              // Old format: this shouldn't happen with new backend, but handle gracefully
+    // Handle images for updates (only if not manager-only edit)
+    if (!isManagerOnly || !product) {
+      if (product && selectedImages.length === 0) {
+        // If updating and no new images selected, send existing image IDs
+        if (product.images && Array.isArray(product.images)) {
+          const existingImageIds = product.images
+            .map((img) => {
+              if (typeof img === 'string') {
+                // Old format: this shouldn't happen with new backend, but handle gracefully
+                return null;
+              } else if (img && img.id) {
+                // New format: send the image ID
+                return img.id;
+              }
               return null;
-            } else if (img && img.id) {
-              // New format: send the image ID
-              return img.id;
-            }
-            return null;
-          })
-          .filter(Boolean);
+            })
+            .filter(Boolean);
 
-        // Use a different field name to avoid conflict with multer file processing
-        formData.append('existingImageIds', JSON.stringify(existingImageIds));
-      } else {
-        // No existing images, send empty array
-        formData.append('existingImageIds', JSON.stringify([]));
+          // Use a different field name to avoid conflict with multer file processing
+          formData.append('existingImageIds', JSON.stringify(existingImageIds));
+        } else {
+          // No existing images, send empty array
+          formData.append('existingImageIds', JSON.stringify([]));
+        }
+      } else if (selectedImages.length > 0) {
+        // If new images are selected, send them as files (multer will process these)
+        selectedImages.forEach((image, index) => {
+          formData.append('images', image);
+        });
       }
-    } else if (selectedImages.length > 0) {
-      // If new images are selected, send them as files (multer will process these)
-      selectedImages.forEach((image, index) => {
-        formData.append('images', image);
-      });
     }
 
     // Debug logging
@@ -925,6 +936,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
                     {...field}
                     error={!!errors.sku}
                     helperText={errors.sku?.message}
+                    disabled={product && isManagerOnly}
                     InputLabelProps={{
                       shrink: !!field.value,
                     }}
@@ -933,29 +945,31 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
               />
             </Grid>
 
-            <Grid item xs={12} sm={6}>
-              <FormControl fullWidth>
-                <InputLabel>Price</InputLabel>
-                <OutlinedInput
-                  startAdornment={
-                    <InputAdornment position="start">₹</InputAdornment>
-                  }
-                  label="Price"
-                  type="number"
-                  step="0.01"
-                  {...register('price', {
-                    required: 'Price is required',
-                    min: { value: 0, message: 'Price must be positive' },
-                  })}
-                  error={!!errors.price}
-                />
-              </FormControl>
-              {errors.price && (
-                <Typography variant="caption" color="error" sx={{ ml: 2 }}>
-                  {errors.price.message}
-                </Typography>
-              )}
-            </Grid>
+            {!(product && isManagerOnly) && (
+              <Grid item xs={12} sm={6}>
+                <FormControl fullWidth>
+                  <InputLabel>Price</InputLabel>
+                  <OutlinedInput
+                    startAdornment={
+                      <InputAdornment position="start">₹</InputAdornment>
+                    }
+                    label="Price"
+                    type="number"
+                    step="0.01"
+                    {...register('price', {
+                      required: 'Price is required',
+                      min: { value: 0, message: 'Price must be positive' },
+                    })}
+                    error={!!errors.price}
+                  />
+                </FormControl>
+                {errors.price && (
+                  <Typography variant="caption" color="error" sx={{ ml: 2 }}>
+                    {errors.price.message}
+                  </Typography>
+                )}
+              </Grid>
+            )}
 
             <Grid item xs={12} sm={6}>
               <FormControl fullWidth>
@@ -967,6 +981,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
                     <Select
                       {...field}
                       label="Category"
+                      disabled={product && isManagerOnly}
                       onChange={(e) => {
                         const value = e.target.value;
                         field.onChange(value);
@@ -996,6 +1011,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
                   }}
                   sx={{ mt: 2 }}
                   error={!!errors.category}
+                  disabled={product && isManagerOnly}
                   helperText={
                     errors.category?.message ||
                     'Enter your custom category name'
@@ -1011,6 +1027,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
                 {...register('unit')}
                 error={!!errors.unit}
                 helperText={errors.unit?.message}
+                disabled={product && isManagerOnly}
               />
             </Grid>
 
@@ -1022,6 +1039,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
                   {...register('status')}
                   error={!!errors.status}
                   defaultValue="active"
+                  disabled={product && isManagerOnly}
                 >
                   <MenuItem value="active">Active</MenuItem>
                   <MenuItem value="inactive">Inactive</MenuItem>
@@ -1042,6 +1060,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
                   label="Product Type"
                   {...register('product_type')}
                   defaultValue="domestic"
+                  disabled={product && isManagerOnly}
                 >
                   <MenuItem value="domestic">Domestic</MenuItem>
                   <MenuItem value="international">International</MenuItem>
@@ -1065,7 +1084,10 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
                   },
                 })}
                 error={!!errors.hsn_code}
-                helperText={errors.hsn_code?.message || 'Enter HSN code (4-20 characters)'}
+                helperText={
+                  errors.hsn_code?.message || 'Enter HSN code (4-20 characters)'
+                }
+                disabled={product && isManagerOnly}
               />
             </Grid>
 
@@ -1087,6 +1109,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
                     },
                   })}
                   error={!!errors.gst_rate}
+                  disabled={product && isManagerOnly}
                 />
               </FormControl>
               {errors.gst_rate && (
@@ -1107,6 +1130,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
                       {...field}
                       label="Zone"
                       error={!!errors.zone}
+                      disabled={product && isManagerOnly}
                     >
                       <MenuItem value="">None</MenuItem>
                       <MenuItem value="A">A</MenuItem>
@@ -1137,8 +1161,10 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
                 {...register('rack')}
                 error={!!errors.rack}
                 helperText={
-                  errors.rack?.message || 'Optional: Enter the rack location (e.g., A1-01, B1-01)'
+                  errors.rack?.message ||
+                  'Optional: Enter the rack location (e.g., A1-01, B1-01)'
                 }
+                disabled={product && isManagerOnly}
               />
             </Grid>
 
@@ -1156,6 +1182,7 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
                 multiple
                 accept="image/jpeg,image/jpg,image/png,image/gif,image/webp"
                 onChange={handleImageChange}
+                disabled={product && isManagerOnly}
                 style={{ marginBottom: '16px' }}
               />
             </Grid>
@@ -1311,6 +1338,7 @@ const Products = () => {
   const [imageFilter, setImageFilter] = useState('');
   const [stockFilter, setStockFilter] = useState('high_to_low');
   const [skuFilter, setSkuFilter] = useState('asc');
+  const [includeQty, setIncludeQty] = useState('no');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [showScrollUp, setShowScrollUp] = useState(false);
@@ -1411,7 +1439,94 @@ const Products = () => {
   };
 
   // Check if any filters are active
-  const hasActiveFilters = search || categoryFilter || imageFilter || stockFilter !== 'high_to_low' || skuFilter !== 'asc';
+  const hasActiveFilters =
+    search ||
+    categoryFilter ||
+    imageFilter ||
+    stockFilter !== 'high_to_low' ||
+    skuFilter !== 'asc';
+
+  const handleDownloadCatalog = async () => {
+    try {
+      const params = {};
+      if (search) params.search = search;
+      if (categoryFilter) params.category = categoryFilter;
+      if (includeQty === 'yes') params.includeQty = 'true';
+
+      toast.loading('Generating catalog PDF...', { id: 'catalog-download' });
+
+      const response = await axios.get('/api/products/catalog/pdf', {
+        params,
+        responseType: 'blob',
+      });
+
+      // Check response status - if not 200, it's an error
+      if (response.status !== 200) {
+        // Try to parse error from blob
+        const text = await response.data.text();
+        try {
+          const errorData = JSON.parse(text);
+          throw new Error(errorData.message || 'Download failed');
+        } catch (parseError) {
+          throw new Error('Failed to download catalog');
+        }
+      }
+
+      // Check content type to ensure it's PDF, not JSON error
+      const contentType = response.headers['content-type'] || '';
+      if (contentType.includes('application/json')) {
+        const text = await response.data.text();
+        const errorData = JSON.parse(text);
+        throw new Error(errorData.message || 'Download failed');
+      }
+
+      // Create blob from response data
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute(
+        'download',
+        `products_catalog_${new Date().toISOString().split('T')[0]}.pdf`,
+      );
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success('Catalog downloaded successfully', {
+        id: 'catalog-download',
+      });
+    } catch (error) {
+      console.error('Catalog download failed:', error);
+      toast.dismiss('catalog-download');
+
+      // Handle axios errors
+      if (error.response) {
+        // Try to extract error message from blob if it's a JSON error
+        if (error.response.data && error.response.data instanceof Blob) {
+          try {
+            const text = await error.response.data.text();
+            const errorData = JSON.parse(text);
+            toast.error(
+              errorData.message ||
+                'Failed to download catalog. Please try again.',
+            );
+            return;
+          } catch {
+            // Not JSON, continue
+          }
+        }
+        toast.error(
+          error.response.data?.message ||
+            'Failed to download catalog. Please try again.',
+        );
+      } else {
+        toast.error(
+          error.message || 'Failed to download catalog. Please try again.',
+        );
+      }
+    }
+  };
 
   const handleExportCSV = async () => {
     try {
@@ -1445,7 +1560,9 @@ const Products = () => {
       }
 
       // Create blob from response data
-      const blob = new Blob([response.data], { type: 'text/csv;charset=utf-8;' });
+      const blob = new Blob([response.data], {
+        type: 'text/csv;charset=utf-8;',
+      });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -1460,7 +1577,7 @@ const Products = () => {
       toast.success('Products exported successfully');
     } catch (error) {
       console.error('Export failed:', error);
-      
+
       // Handle axios errors
       if (error.response) {
         // Try to extract error message from blob if it's a JSON error
@@ -1468,15 +1585,23 @@ const Products = () => {
           try {
             const text = await error.response.data.text();
             const errorData = JSON.parse(text);
-            toast.error(errorData.message || 'Failed to export products. Please try again.');
+            toast.error(
+              errorData.message ||
+                'Failed to export products. Please try again.',
+            );
             return;
           } catch {
             // Not JSON, continue
           }
         }
-        toast.error(error.response.data?.message || 'Failed to export products. Please try again.');
+        toast.error(
+          error.response.data?.message ||
+            'Failed to export products. Please try again.',
+        );
       } else {
-        toast.error(error.message || 'Failed to export products. Please try again.');
+        toast.error(
+          error.message || 'Failed to export products. Please try again.',
+        );
       }
     }
   };
@@ -1567,6 +1692,44 @@ const Products = () => {
           </Typography>
         </Box>
         <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+          <FormControl variant="outlined" size="small" sx={{ minWidth: 150 }}>
+            <InputLabel>Product Quantity</InputLabel>
+            <Select
+              value={includeQty}
+              onChange={(e) => setIncludeQty(e.target.value)}
+              label="Product Quantity"
+              sx={{
+                borderRadius: 2,
+                '& .MuiOutlinedInput-notchedOutline': {
+                  borderColor: 'primary.main',
+                },
+              }}
+            >
+              <MenuItem value="no">Without Qty</MenuItem>
+              <MenuItem value="yes">With Qty</MenuItem>
+            </Select>
+          </FormControl>
+          <Button
+            variant="outlined"
+            startIcon={<Download />}
+            onClick={handleDownloadCatalog}
+            sx={{
+              borderRadius: 2,
+              px: 3,
+              py: 1,
+              fontWeight: 600,
+              textTransform: 'none',
+              borderColor: 'primary.main',
+              color: 'primary.main',
+              '&:hover': {
+                borderColor: 'primary.dark',
+                backgroundColor: 'primary.light',
+                color: 'white',
+              },
+            }}
+          >
+            Products Catalog
+          </Button>
           {isAdmin && (
             <Button
               variant="outlined"
@@ -1830,6 +1993,7 @@ const Products = () => {
               onDelete={handleDelete}
               onView={handleView}
               isAdmin={isAdmin}
+              canEdit={canEdit}
             />
           </Grid>
         ))}

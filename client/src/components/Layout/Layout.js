@@ -49,8 +49,8 @@ const menuItems = [
   { text: 'Reconciliation', icon: <CompareArrows />, path: '/reconciliation' },
   { text: 'Transactions', icon: <SwapHoriz />, path: '/transactions' },
   { text: 'Alerts', icon: <Warning />, path: '/alerts' },
-  { text: 'Reports', icon: <Assessment />, path: '/reports' },
-  { text: 'Settings', icon: <Settings />, path: '/settings' }
+  { text: 'Reports', icon: <Assessment />, path: '/reports', adminOnly: true },
+  { text: 'Settings', icon: <Settings />, path: '/settings', adminOnly: true }
 ];
 
 const Layout = ({ children }) => {
@@ -58,8 +58,16 @@ const Layout = ({ children }) => {
   const [anchorEl, setAnchorEl] = useState(null);
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, logout } = useAuth();
+  const { user, logout, isAdmin } = useAuth();
   const { connected } = useSocket();
+  
+  // Filter menu items based on user role
+  const filteredMenuItems = menuItems.filter(item => {
+    if (item.adminOnly && !isAdmin) {
+      return false;
+    }
+    return true;
+  });
 
   // Get active alerts count
   const { data: alertsData } = useQuery(
@@ -96,7 +104,7 @@ const Layout = ({ children }) => {
       </Toolbar>
       <Divider />
       <List>
-        {menuItems.map((item) => (
+        {filteredMenuItems.map((item) => (
           <ListItem key={item.text} disablePadding>
             <ListItemButton
               selected={location.pathname === item.path}
@@ -196,12 +204,14 @@ const Layout = ({ children }) => {
               </Box>
             </MenuItem>
             <Divider />
-            <MenuItem onClick={() => { handleMenuClose(); navigate('/settings'); }}>
-              <ListItemIcon>
-                <AccountCircle fontSize="small" />
-              </ListItemIcon>
-              Profile
-            </MenuItem>
+            {isAdmin && (
+              <MenuItem onClick={() => { handleMenuClose(); navigate('/settings'); }}>
+                <ListItemIcon>
+                  <AccountCircle fontSize="small" />
+                </ListItemIcon>
+                Profile
+              </MenuItem>
+            )}
             <MenuItem onClick={handleLogout}>
               <ListItemIcon>
                 <Logout fontSize="small" />

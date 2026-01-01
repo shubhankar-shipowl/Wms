@@ -32,10 +32,12 @@ import { useQuery } from "react-query";
 import axios from "axios";
 import { format } from "date-fns";
 import LoadingSpinner from "../components/Common/LoadingSpinner";
+import { useAuth } from "../contexts/AuthContext";
 
 const ProductDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { isAdmin } = useAuth();
 
   // Fetch product details
   const {
@@ -247,19 +249,21 @@ const ProductDetail = () => {
                 </Box>
               </Box>
 
-              <Box sx={{ display: "flex", alignItems: "center" }}>
-                <CurrencyRupee sx={{ mr: 1, color: "success.main" }} />
-                <Box>
-                  <Typography variant="h4" color="success.main">
-                    {(
-                      (product.total_stock || 0) * product.price
-                    ).toLocaleString()}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Stock Value
-                  </Typography>
+              {isAdmin && (
+                <Box sx={{ display: "flex", alignItems: "center" }}>
+                  <CurrencyRupee sx={{ mr: 1, color: "success.main" }} />
+                  <Box>
+                    <Typography variant="h4" color="success.main">
+                      {(
+                        (product.total_stock || 0) * product.price
+                      ).toLocaleString()}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Stock Value
+                    </Typography>
+                  </Box>
                 </Box>
-              </Box>
+              )}
             </CardContent>
           </Card>
 

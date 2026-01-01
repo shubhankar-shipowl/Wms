@@ -19,7 +19,7 @@ import Reconciliation from "./pages/Reconciliation";
 import LoadingSpinner from "./components/Common/LoadingSpinner";
 
 function App() {
-  const { user, loading } = useAuth();
+  const { user, loading, isAdmin } = useAuth();
 
   // Enable real-time updates
   useRealtimeUpdates();
@@ -51,8 +51,19 @@ function App() {
           <Route path="/scanner" element={<BarcodeScanner />} />
           <Route path="/reconciliation" element={<Reconciliation />} />
           <Route path="/alerts" element={<Alerts />} />
-          <Route path="/reports" element={<Reports />} />
-          <Route path="/settings" element={<Settings />} />
+          {isAdmin && (
+            <>
+              <Route path="/reports" element={<Reports />} />
+              <Route path="/settings" element={<Settings />} />
+            </>
+          )}
+          {/* Redirect managers away from reports and settings */}
+          {!isAdmin && (
+            <>
+              <Route path="/reports" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/settings" element={<Navigate to="/dashboard" replace />} />
+            </>
+          )}
           <Route path="/login" element={<Navigate to="/dashboard" replace />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>

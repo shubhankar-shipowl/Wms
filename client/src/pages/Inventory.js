@@ -52,6 +52,7 @@ import {
 import axios from "axios";
 import { format } from "date-fns";
 import LoadingSpinner from "../components/Common/LoadingSpinner";
+import { useAuth } from "../contexts/AuthContext";
 
 const MetricCard = ({ title, value, icon, color = "primary", subtitle }) => (
   <Card>
@@ -88,6 +89,7 @@ const Inventory = () => {
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [barcodeDialogOpen, setBarcodeDialogOpen] = useState(false);
   const [tabValue, setTabValue] = useState(0);
+  const { isAdmin } = useAuth();
 
   // Get inventory overview
   const {
@@ -227,7 +229,7 @@ const Inventory = () => {
 
       {/* Key Metrics */}
       <Grid container spacing={3} sx={{ mb: 3 }}>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid item xs={12} sm={6} md={isAdmin ? 3 : 4}>
           <MetricCard
             title="Total Products"
             value={overview.totalProducts || 0}
@@ -235,15 +237,17 @@ const Inventory = () => {
             color="primary"
           />
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <MetricCard
-            title="Inventory Value"
-            value={`${(overview.totalStockValue || 0).toLocaleString()}`}
-            icon={<CurrencyRupee fontSize="large" />}
-            color="success"
-          />
-        </Grid>
-        <Grid item xs={12} sm={6} md={3}>
+        {isAdmin && (
+          <Grid item xs={12} sm={6} md={3}>
+            <MetricCard
+              title="Inventory Value"
+              value={`${(overview.totalStockValue || 0).toLocaleString()}`}
+              icon={<CurrencyRupee fontSize="large" />}
+              color="success"
+            />
+          </Grid>
+        )}
+        <Grid item xs={12} sm={6} md={isAdmin ? 3 : 4}>
           <MetricCard
             title="Low Stock Items"
             value={overview.lowStockCount || 0}
@@ -251,7 +255,7 @@ const Inventory = () => {
             color="error"
           />
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid item xs={12} sm={6} md={isAdmin ? 3 : 4}>
           <MetricCard
             title="Recent Activity"
             value={overview.recentTransactions || 0}
@@ -314,7 +318,7 @@ const Inventory = () => {
                   <TableCell>SKU</TableCell>
                   <TableCell align="right">Current Stock</TableCell>
                   <TableCell align="right">Threshold</TableCell>
-                  <TableCell align="right">Stock Value</TableCell>
+                  {isAdmin && <TableCell align="right">Stock Value</TableCell>}
                   <TableCell align="center">Status</TableCell>
                   <TableCell align="center">Actions</TableCell>
                 </TableRow>
@@ -344,12 +348,14 @@ const Inventory = () => {
                     <TableCell align="right">
                       {product.low_stock_threshold}
                     </TableCell>
-                    <TableCell align="right">
-                      ₹
-                      {(
-                        parseFloat(product.price) * product.current_stock
-                      ).toFixed(2)}
-                    </TableCell>
+                    {isAdmin && (
+                      <TableCell align="right">
+                        ₹
+                        {(
+                          parseFloat(product.price) * product.current_stock
+                        ).toFixed(2)}
+                      </TableCell>
+                    )}
                     <TableCell align="center">
                       {product.stock_status === "low" ||
                       product.stock_status === "critical" ? (
@@ -499,9 +505,9 @@ const Inventory = () => {
                           <TableRow>
                             <TableCell>Product</TableCell>
                             <TableCell>SKU</TableCell>
-                            <TableCell align="right">Unit Price</TableCell>
+                            {isAdmin && <TableCell align="right">Unit Price</TableCell>}
                             <TableCell align="right">Stock Quantity</TableCell>
-                            <TableCell align="right">Total Value</TableCell>
+                            {isAdmin && <TableCell align="right">Total Value</TableCell>}
                           </TableRow>
                         </TableHead>
                         <TableBody>
@@ -509,21 +515,25 @@ const Inventory = () => {
                             <TableRow key={item.id}>
                               <TableCell>{item.name}</TableCell>
                               <TableCell>{item.sku}</TableCell>
-                              <TableCell align="right">₹{item.price}</TableCell>
+                              {isAdmin && (
+                                <TableCell align="right">₹{item.price}</TableCell>
+                              )}
                               <TableCell align="right">
                                 {item.current_stock}
                               </TableCell>
-                              <TableCell align="right">
-                                <Typography
-                                  variant="subtitle2"
-                                  fontWeight="bold"
-                                >
-                                  ₹
-                                  {(
-                                    parseFloat(item.price) * item.current_stock
-                                  ).toFixed(2)}
-                                </Typography>
-                              </TableCell>
+                              {isAdmin && (
+                                <TableCell align="right">
+                                  <Typography
+                                    variant="subtitle2"
+                                    fontWeight="bold"
+                                  >
+                                    ₹
+                                    {(
+                                      parseFloat(item.price) * item.current_stock
+                                    ).toFixed(2)}
+                                  </Typography>
+                                </TableCell>
+                              )}
                             </TableRow>
                           ))}
                         </TableBody>
@@ -533,21 +543,23 @@ const Inventory = () => {
                 </Card>
               </Grid>
 
-              <Grid item xs={12} md={4}>
-                <Card>
-                  <CardContent>
-                    <Typography variant="h6" gutterBottom>
-                      Total Inventory Value
-                    </Typography>
-                    <Typography variant="h3" color="primary" gutterBottom>
-                      ₹{overview.totalStockValue?.toLocaleString() || "0"}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      Based on current stock levels and unit prices
-                    </Typography>
-                  </CardContent>
-                </Card>
-              </Grid>
+              {isAdmin && (
+                <Grid item xs={12} md={4}>
+                  <Card>
+                    <CardContent>
+                      <Typography variant="h6" gutterBottom>
+                        Total Inventory Value
+                      </Typography>
+                      <Typography variant="h3" color="primary" gutterBottom>
+                        ₹{overview.totalStockValue?.toLocaleString() || "0"}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Based on current stock levels and unit prices
+                      </Typography>
+                    </CardContent>
+                  </Card>
+                </Grid>
+              )}
             </Grid>
           )}
         </Box>

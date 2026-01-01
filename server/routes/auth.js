@@ -208,7 +208,7 @@ router.post("/change-password", authenticateToken, async (req, res) => {
 
     // Get current user's password hash
     const [rows] = await pool.execute(
-      `SELECT password_hash FROM products WHERE id = ?`,
+      `SELECT password_hash FROM ${getTableName("users")} WHERE id = ?`,
       [userId]
     );
 
@@ -237,10 +237,10 @@ router.post("/change-password", authenticateToken, async (req, res) => {
     const newPasswordHash = await bcrypt.hash(new_password, 10);
 
     // Update password
-    await pool.execute(`UPDATE users SET password_hash = ? WHERE id = ?`, [
-      newPasswordHash,
-      userId,
-    ]);
+    await pool.execute(
+      `UPDATE ${getTableName("users")} SET password_hash = ? WHERE id = ?`,
+      [newPasswordHash, userId]
+    );
 
     res.json({
       success: true,
