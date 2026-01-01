@@ -1155,36 +1155,27 @@ router.put(
         }
       }
 
-      // Handle image uploads (managers cannot update images)
+      // Handle image uploads (managers can now update images)
       let imageIds = [];
       const isManager = req.user.role === 'manager';
       
-      if (!isManager) {
-        // Only non-managers can update images
-        if (req.processedImages && req.processedImages.length > 0) {
-          // If new images are uploaded, replace existing ones
-          imageIds = await saveImagesToDatabase(id, req.processedImages);
+      if (req.processedImages && req.processedImages.length > 0) {
+        // If new images are uploaded, replace existing ones (managers can do this)
+        imageIds = await saveImagesToDatabase(id, req.processedImages);
 
-          // Clean up old images
-          const currentProduct = existingProduct[0];
-          if (currentProduct.images) {
-            const oldImageIds = JSON.parse(currentProduct.images);
-            await cleanupOldImages(oldImageIds);
-          }
-        } else if (existingImageIds !== null) {
-          // If existing image IDs are provided (for keeping existing images)
-          imageIds = Array.isArray(existingImageIds)
-            ? existingImageIds.map((imgId) => parseInt(imgId)).filter((id) => !isNaN(id))
-            : [];
-        } else {
-          // Keep existing images if no new ones provided and no explicit IDs sent
-          const currentProduct = existingProduct[0];
-          if (currentProduct.images) {
-            imageIds = JSON.parse(currentProduct.images);
-          }
+        // Clean up old images
+        const currentProduct = existingProduct[0];
+        if (currentProduct.images) {
+          const oldImageIds = JSON.parse(currentProduct.images);
+          await cleanupOldImages(oldImageIds);
         }
+      } else if (existingImageIds !== null) {
+        // If existing image IDs are provided (for keeping existing images)
+        imageIds = Array.isArray(existingImageIds)
+          ? existingImageIds.map((imgId) => parseInt(imgId)).filter((id) => !isNaN(id))
+          : [];
       } else {
-        // Managers: keep existing images unchanged
+        // Keep existing images if no new ones provided and no explicit IDs sent
         const currentProduct = existingProduct[0];
         if (currentProduct.images) {
           imageIds = JSON.parse(currentProduct.images);

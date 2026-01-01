@@ -821,9 +821,10 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
   const onSubmit = (data) => {
     const formData = new FormData();
 
-    // If manager is editing (not creating), only send name field
+    // If manager is editing (not creating), only send name and images
     if (product && isManagerOnly) {
       formData.append('name', data.name);
+      // Images are handled separately below
     } else {
       // Handle category - if custom, use custom value
       const categoryValue =
@@ -840,36 +841,34 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
       });
     }
 
-    // Handle images for updates (only if not manager-only edit)
-    if (!isManagerOnly || !product) {
-      if (product && selectedImages.length === 0) {
-        // If updating and no new images selected, send existing image IDs
-        if (product.images && Array.isArray(product.images)) {
-          const existingImageIds = product.images
-            .map((img) => {
-              if (typeof img === 'string') {
-                // Old format: this shouldn't happen with new backend, but handle gracefully
-                return null;
-              } else if (img && img.id) {
-                // New format: send the image ID
-                return img.id;
-              }
+    // Handle images for updates
+    if (product && selectedImages.length === 0) {
+      // If updating and no new images selected, send existing image IDs
+      if (product.images && Array.isArray(product.images)) {
+        const existingImageIds = product.images
+          .map((img) => {
+            if (typeof img === 'string') {
+              // Old format: this shouldn't happen with new backend, but handle gracefully
               return null;
-            })
-            .filter(Boolean);
+            } else if (img && img.id) {
+              // New format: send the image ID
+              return img.id;
+            }
+            return null;
+          })
+          .filter(Boolean);
 
-          // Use a different field name to avoid conflict with multer file processing
-          formData.append('existingImageIds', JSON.stringify(existingImageIds));
-        } else {
-          // No existing images, send empty array
-          formData.append('existingImageIds', JSON.stringify([]));
-        }
-      } else if (selectedImages.length > 0) {
-        // If new images are selected, send them as files (multer will process these)
-        selectedImages.forEach((image, index) => {
-          formData.append('images', image);
-        });
+        // Use a different field name to avoid conflict with multer file processing
+        formData.append('existingImageIds', JSON.stringify(existingImageIds));
+      } else {
+        // No existing images, send empty array
+        formData.append('existingImageIds', JSON.stringify([]));
       }
+    } else if (selectedImages.length > 0) {
+      // If new images are selected, send them as files (multer will process these)
+      selectedImages.forEach((image, index) => {
+        formData.append('images', image);
+      });
     }
 
     // Debug logging
@@ -1182,7 +1181,6 @@ const ProductForm = ({ open, onClose, product = null, onSuccess }) => {
                 multiple
                 accept="image/jpeg,image/jpg,image/png,image/gif,image/webp"
                 onChange={handleImageChange}
-                disabled={product && isManagerOnly}
                 style={{ marginBottom: '16px' }}
               />
             </Grid>
