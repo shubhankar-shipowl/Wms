@@ -37,7 +37,7 @@ import { useAuth } from "../contexts/AuthContext";
 const ProductDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { isAdmin } = useAuth();
+  const { isAdmin, isManager } = useAuth();
 
   // Fetch product details
   const {
@@ -147,14 +147,16 @@ const ProductDetail = () => {
                   </Typography>
                 </Grid>
 
-                <Grid item xs={12} sm={6}>
-                  <Typography variant="subtitle2" color="text.secondary">
-                    Price
-                  </Typography>
-                  <Typography variant="h6" color="primary" gutterBottom>
-                    ₹{product.price}
-                  </Typography>
-                </Grid>
+                {isAdmin && (
+                  <Grid item xs={12} sm={6}>
+                    <Typography variant="subtitle2" color="text.secondary">
+                      Price
+                    </Typography>
+                    <Typography variant="h6" color="primary" gutterBottom>
+                      ₹{product.price}
+                    </Typography>
+                  </Grid>
+                )}
 
                 <Grid item xs={12} sm={6}>
                   <Typography variant="subtitle2" color="text.secondary">

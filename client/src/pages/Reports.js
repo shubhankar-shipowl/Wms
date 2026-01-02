@@ -53,6 +53,7 @@ import { useQuery } from 'react-query';
 import axios from 'axios';
 import { format } from 'date-fns';
 import LoadingSpinner from '../components/Common/LoadingSpinner';
+import { useAuth } from '../contexts/AuthContext';
 
 const MetricCard = ({
   title,
@@ -107,6 +108,7 @@ const MetricCard = ({
 );
 
 const Reports = () => {
+  const { isAdmin } = useAuth();
   const [selectedPeriod, setSelectedPeriod] = useState('30');
   const [selectedTab, setSelectedTab] = useState(0);
 
@@ -419,14 +421,16 @@ const Reports = () => {
             color="primary"
           />
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <MetricCard
-            title="Inventory Value"
-            value={`₹${(reports.inventoryValue || 0).toLocaleString()}`}
-            icon={<CurrencyRupee fontSize="large" />}
-            color="success"
-          />
-        </Grid>
+        {isAdmin && (
+          <Grid item xs={12} sm={6} md={3}>
+            <MetricCard
+              title="Inventory Value"
+              value={`₹${(reports.inventoryValue || 0).toLocaleString()}`}
+              icon={<CurrencyRupee fontSize="large" />}
+              color="success"
+            />
+          </Grid>
+        )}
         <Grid item xs={12} sm={6} md={3}>
           <MetricCard
             title="Low Stock Items"
@@ -756,7 +760,7 @@ const Reports = () => {
                       <TableRow>
                         <TableCell>Category</TableCell>
                         <TableCell align="right">Count</TableCell>
-                        <TableCell align="right">Value</TableCell>
+                        {isAdmin && <TableCell align="right">Value</TableCell>}
                         <TableCell align="right">Percentage</TableCell>
                       </TableRow>
                     </TableHead>
@@ -777,9 +781,11 @@ const Reports = () => {
                             />
                           </TableCell>
                           <TableCell align="right">{item.count}</TableCell>
-                          <TableCell align="right">
-                            ₹{item.value.toLocaleString()}
-                          </TableCell>
+                          {isAdmin && (
+                            <TableCell align="right">
+                              ₹{item.value.toLocaleString()}
+                            </TableCell>
+                          )}
                           <TableCell align="right">
                             {item.percentage}%
                           </TableCell>

@@ -391,20 +391,22 @@ const ProductCard = ({
           )}
 
           {/* Price */}
-          <Typography
-            variant="h6"
-            color="primary"
-            sx={{
-              fontWeight: 'bold',
-              mb: 1,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 0.5,
-              fontSize: '1.1rem',
-            }}
-          >
-            <ShoppingCart fontSize="small" />₹{product.price}
-          </Typography>
+          {isAdmin && (
+            <Typography
+              variant="h6"
+              color="primary"
+              sx={{
+                fontWeight: 'bold',
+                mb: 1,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 0.5,
+                fontSize: '1.1rem',
+              }}
+            >
+              <ShoppingCart fontSize="small" />₹{product.price}
+            </Typography>
+          )}
 
           {/* Stock and Barcode Info */}
           <Box
@@ -1689,67 +1691,69 @@ const Products = () => {
             Manage your inventory products
           </Typography>
         </Box>
-        <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-          <FormControl variant="outlined" size="small" sx={{ minWidth: 150 }}>
-            <InputLabel>Product Quantity</InputLabel>
-            <Select
-              value={includeQty}
-              onChange={(e) => setIncludeQty(e.target.value)}
-              label="Product Quantity"
-              sx={{
-                borderRadius: 2,
-                '& .MuiOutlinedInput-notchedOutline': {
-                  borderColor: 'primary.main',
-                },
-              }}
-            >
-              <MenuItem value="no">Without Qty</MenuItem>
-              <MenuItem value="yes">With Qty</MenuItem>
-            </Select>
-          </FormControl>
-          <Button
-            variant="outlined"
-            startIcon={<Download />}
-            onClick={handleDownloadCatalog}
-            sx={{
-              borderRadius: 2,
-              px: 3,
-              py: 1,
-              fontWeight: 600,
-              textTransform: 'none',
-              borderColor: 'primary.main',
-              color: 'primary.main',
-              '&:hover': {
-                borderColor: 'primary.dark',
-                backgroundColor: 'primary.light',
-                color: 'white',
-              },
-            }}
-          >
-            Products Catalog
-          </Button>
+        <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
           {isAdmin && (
-            <Button
-              variant="outlined"
-              startIcon={<Download />}
-              onClick={handleExportCSV}
-              sx={{
-                borderRadius: 2,
-                px: 3,
-                py: 1,
-                fontWeight: 600,
-                textTransform: 'none',
-                borderColor: 'primary.main',
-                color: 'primary.main',
-                '&:hover': {
-                  borderColor: 'primary.dark',
-                  backgroundColor: 'primary.light',
-                  color: 'white',
-                },
-              }}
-            >
-              Export CSV
-            </Button>
+            <>
+              <FormControl variant="outlined" size="small" sx={{ minWidth: 150 }}>
+                <InputLabel>Product Quantity</InputLabel>
+                <Select
+                  value={includeQty}
+                  onChange={(e) => setIncludeQty(e.target.value)}
+                  label="Product Quantity"
+                  sx={{
+                    borderRadius: 2,
+                    '& .MuiOutlinedInput-notchedOutline': {
+                      borderColor: 'primary.main',
+                    },
+                  }}
+                >
+                  <MenuItem value="no">Without Qty</MenuItem>
+                  <MenuItem value="yes">With Qty</MenuItem>
+                </Select>
+              </FormControl>
+              <Button
+                variant="outlined"
+                startIcon={<Download />}
+                onClick={handleDownloadCatalog}
+                sx={{
+                  borderRadius: 2,
+                  px: 3,
+                  py: 1,
+                  fontWeight: 600,
+                  textTransform: 'none',
+                  borderColor: 'primary.main',
+                  color: 'primary.main',
+                  '&:hover': {
+                    borderColor: 'primary.dark',
+                    backgroundColor: 'primary.light',
+                    color: 'white',
+                  },
+                }}
+              >
+                Products Catalog
+              </Button>
+              <Button
+                variant="outlined"
+                startIcon={<Download />}
+                onClick={handleExportCSV}
+                sx={{
+                  borderRadius: 2,
+                  px: 3,
+                  py: 1,
+                  fontWeight: 600,
+                  textTransform: 'none',
+                  borderColor: 'primary.main',
+                  color: 'primary.main',
+                  '&:hover': {
+                    borderColor: 'primary.dark',
+                    backgroundColor: 'primary.light',
+                    color: 'white',
+                  },
+                }}
+              >
+                Export CSV
+              </Button>
+            </>
           )}
           {canEdit && (
             <Button

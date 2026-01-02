@@ -209,7 +209,7 @@ const MetricCard = ({
 );
 
 const Dashboard = () => {
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, isManager } = useAuth();
   const queryClient = useQueryClient();
   const [lastUpdated, setLastUpdated] = useState(new Date());
 
@@ -464,7 +464,7 @@ const Dashboard = () => {
                     </Pie>
                     <Tooltip
                       formatter={(value, name) => [
-                        `₹${value.toLocaleString()}`,
+                        isAdmin ? `₹${value.toLocaleString()}` : "N/A",
                         name,
                       ]}
                       labelFormatter={(label) => `Product: ${label}`}
