@@ -5,13 +5,56 @@ const { authenticateToken, requireRole } = require("../middleware/auth");
 
 const router = express.Router();
 
-// Get low stock alerts (simplified - using products table directly)
+// Helper function to calculate average daily consumption and days until stockout
+async function calculateForecast(productId, currentStock) {
+  try {
+    // Calculate total stock out in the last 90 days
+    const [outResult] = await pool.execute(
+      `
+      SELECT 
+        COALESCE(SUM(quantity), 0) as total_out,
+        COUNT(DISTINCT DATE(created_at)) as days_with_transactions
+      FROM transactions
+      WHERE product_id = ?
+        AND type = 'out'
+        AND created_at >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+    `,
+      [productId]
+    );
+
+    const totalOut = parseInt(outResult[0].total_out) || 0;
+    const daysWithTransactions = parseInt(outResult[0].days_with_transactions) || 1; // Avoid division by zero
+
+    // Calculate average daily consumption
+    const avgDailyConsumption = totalOut / daysWithTransactions;
+
+    // Calculate days until stockout (only if there's consumption and stock)
+    let daysUntilStockout = null;
+    if (avgDailyConsumption > 0 && currentStock > 0) {
+      daysUntilStockout = currentStock / avgDailyConsumption;
+    }
+
+    return {
+      avgDailyConsumption: parseFloat(avgDailyConsumption.toFixed(2)),
+      daysUntilStockout: daysUntilStockout ? parseFloat(daysUntilStockout.toFixed(2)) : null,
+    };
+  } catch (error) {
+    console.error(`Error calculating forecast for product ${productId}:`, error);
+    return {
+      avgDailyConsumption: 0,
+      daysUntilStockout: null,
+    };
+  }
+}
+
+// Get low stock alerts (with forecast-based logic)
 router.get("/low-stock", authenticateToken, async (req, res) => {
   try {
     const { page = 1, limit = 20 } = req.query;
     const offset = (page - 1) * limit;
 
-    const [alerts] = await pool.execute(
+    // First, get all products with their stock levels
+    const [allProducts] = await pool.execute(
       `
       SELECT 
         p.id as product_id,
@@ -20,38 +63,73 @@ router.get("/low-stock", authenticateToken, async (req, res) => {
         p.price as product_price,
         p.low_stock_threshold,
         p.stock_quantity as current_stock,
-        CASE 
-          WHEN p.stock_quantity = 0 THEN 'critical'
-          WHEN p.stock_quantity <= p.low_stock_threshold THEN 'low'
-          ELSE 'normal'
-        END as alert_level,
         p.updated_at as last_updated
       FROM products p
-      WHERE p.stock_quantity <= p.low_stock_threshold
-      ORDER BY 
-        CASE 
-          WHEN p.stock_quantity = 0 THEN 0
-          ELSE p.stock_quantity / p.low_stock_threshold
-        END ASC,
-        p.updated_at DESC
-      LIMIT ? OFFSET ?
-    `,
-      [parseInt(limit), parseInt(offset)]
+      WHERE p.stock_quantity >= 0
+    `
     );
 
-    // Get total count
-    const [countResult] = await pool.execute(`
-      SELECT COUNT(*) as total
-      FROM products p
-      WHERE p.stock_quantity <= p.low_stock_threshold
-    `);
+    // Calculate forecast for each product and filter alerts
+    const alertsWithForecast = [];
+    
+    for (const product of allProducts) {
+      const forecast = await calculateForecast(product.product_id, product.current_stock);
+      
+      // Only check forecast-based alert (will run out in 15 days or less)
+      // Also alert if stock is 0 (critical case)
+      let shouldAlert = false;
+      let alertLevel = 'low';
+      
+      if (product.current_stock === 0) {
+        // Critical: out of stock
+        alertLevel = 'critical';
+        shouldAlert = true;
+      } else if (forecast.daysUntilStockout !== null && forecast.daysUntilStockout <= 15 && product.current_stock > 0) {
+        // Forecast-based alert: will run out in 15 days or less
+        shouldAlert = true;
+        // Set critical if days until stockout is very low (3 days or less)
+        if (forecast.daysUntilStockout <= 3) {
+          alertLevel = 'critical';
+        }
+      }
 
-    const total = parseInt(countResult[0].total);
+      // Add to alerts if should alert
+      if (shouldAlert) {
+        alertsWithForecast.push({
+          ...product,
+          alert_level: alertLevel,
+          alert_type: 'forecast',
+          avg_daily_consumption: forecast.avgDailyConsumption,
+          days_until_stockout: forecast.daysUntilStockout,
+        });
+      }
+    }
+
+    // Sort alerts by priority
+    alertsWithForecast.sort((a, b) => {
+      // Critical alerts first (stock = 0 or days until stockout <= 3)
+      if (a.alert_level === 'critical' && b.alert_level !== 'critical') return -1;
+      if (b.alert_level === 'critical' && a.alert_level !== 'critical') return 1;
+      
+      // Then by days until stockout (lower first)
+      if (a.days_until_stockout !== null && b.days_until_stockout !== null) {
+        return a.days_until_stockout - b.days_until_stockout;
+      }
+      if (a.days_until_stockout !== null) return -1;
+      if (b.days_until_stockout !== null) return 1;
+      
+      // Finally by current stock (lower first)
+      return a.current_stock - b.current_stock;
+    });
+
+    // Apply pagination
+    const total = alertsWithForecast.length;
+    const paginatedAlerts = alertsWithForecast.slice(offset, offset + parseInt(limit));
 
     res.json({
       success: true,
       data: {
-        alerts,
+        alerts: paginatedAlerts,
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),
@@ -69,20 +147,60 @@ router.get("/low-stock", authenticateToken, async (req, res) => {
   }
 });
 
-// Get alert summary
+// Get alert summary (including forecast-based alerts)
 router.get("/summary", authenticateToken, async (req, res) => {
   try {
-    const [summary] = await pool.execute(`
+    // Get all products
+    const [allProducts] = await pool.execute(`
       SELECT 
-        COUNT(CASE WHEN p.stock_quantity = 0 THEN 1 END) as critical_alerts,
-        COUNT(CASE WHEN p.stock_quantity > 0 AND p.stock_quantity <= p.low_stock_threshold THEN 1 END) as low_stock_alerts,
-        COUNT(CASE WHEN p.stock_quantity > p.low_stock_threshold THEN 1 END) as normal_stock
+        p.id,
+        p.stock_quantity,
+        p.low_stock_threshold
       FROM products p
+      WHERE p.stock_quantity >= 0
     `);
+
+    let criticalAlerts = 0;
+    let forecastAlerts = 0;
+    let normalStock = 0;
+
+    // Check each product for alerts (forecast-based only)
+    for (const product of allProducts) {
+      const forecast = await calculateForecast(product.id, product.stock_quantity);
+      
+      let hasAlert = false;
+
+      // Check forecast-based alerts
+      if (product.stock_quantity === 0) {
+        // Out of stock - critical
+        criticalAlerts++;
+        hasAlert = true;
+      } else if (forecast.daysUntilStockout !== null && 
+          forecast.daysUntilStockout <= 15 && 
+          product.stock_quantity > 0) {
+        // Will run out in 15 days or less
+        if (forecast.daysUntilStockout <= 3) {
+          criticalAlerts++;
+        } else {
+          forecastAlerts++;
+        }
+        hasAlert = true;
+      }
+
+      // Count normal stock
+      if (!hasAlert) {
+        normalStock++;
+      }
+    }
 
     res.json({
       success: true,
-      data: summary[0],
+      data: {
+        critical_alerts: criticalAlerts,
+        forecast_alerts: forecastAlerts,
+        normal_stock: normalStock,
+        total_products: allProducts.length,
+      },
     });
   } catch (error) {
     console.error("Get alert summary error:", error);
@@ -195,6 +313,81 @@ router.get("/movement-alerts", authenticateToken, async (req, res) => {
     });
   } catch (error) {
     console.error("Get movement alerts error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+});
+
+// Manually trigger low stock check (including forecast-based alerts)
+router.post("/check-low-stock", authenticateToken, async (req, res) => {
+  try {
+    // Get all products
+    const [allProducts] = await pool.execute(`
+      SELECT 
+        p.id,
+        p.name,
+        p.sku,
+        p.stock_quantity,
+        p.low_stock_threshold
+      FROM products p
+      WHERE p.stock_quantity >= 0
+    `);
+
+    const alertsFound = [];
+
+    // Check each product for alerts (forecast-based only)
+    for (const product of allProducts) {
+      const forecast = await calculateForecast(product.id, product.stock_quantity);
+      
+      let alertLevel = null;
+      let shouldAlert = false;
+
+      // Check forecast-based alert (will run out in 15 days or less)
+      // Also alert if stock is 0 (critical case)
+      if (product.stock_quantity === 0) {
+        // Critical: out of stock
+        alertLevel = 'critical';
+        shouldAlert = true;
+      } else if (forecast.daysUntilStockout !== null && 
+          forecast.daysUntilStockout <= 15 && 
+          product.stock_quantity > 0) {
+        // Forecast-based alert: will run out in 15 days or less
+        shouldAlert = true;
+        // Set critical if days until stockout is very low (3 days or less)
+        if (forecast.daysUntilStockout <= 3) {
+          alertLevel = 'critical';
+        } else {
+          alertLevel = 'low';
+        }
+      }
+
+      if (shouldAlert) {
+        alertsFound.push({
+          product_id: product.id,
+          product_name: product.name,
+          product_sku: product.sku,
+          current_stock: product.stock_quantity,
+          low_stock_threshold: product.low_stock_threshold,
+          alert_level: alertLevel,
+          alert_type: 'forecast',
+          avg_daily_consumption: forecast.avgDailyConsumption,
+          days_until_stockout: forecast.daysUntilStockout,
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Found ${alertsFound.length} products with low stock alerts`,
+      data: {
+        alerts_count: alertsFound.length,
+        alerts: alertsFound,
+      },
+    });
+  } catch (error) {
+    console.error("Check low stock error:", error);
     res.status(500).json({
       success: false,
       message: "Internal server error",

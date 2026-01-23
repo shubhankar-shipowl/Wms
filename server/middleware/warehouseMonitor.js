@@ -33,44 +33,100 @@ class WarehouseMonitor {
   async updateSystemMetrics() {
     try {
       // Check if database connection is available
-      const connection = await pool.getConnection();
-      await connection.ping();
-      connection.release();
+      let connection;
+      try {
+        connection = await pool.getConnection();
+        await connection.ping();
+        connection.release();
+      } catch (pingError) {
+        // If ping fails, release connection if it exists and skip metrics update
+        if (connection) {
+          try {
+            connection.release();
+          } catch (e) {
+            // Ignore release errors
+          }
+        }
+        // Silently skip metrics update for connection errors
+        const isConnectionError = 
+          pingError.code === 'ECONNRESET' ||
+          pingError.errno === -54 ||
+          pingError.message.includes('ENETUNREACH') ||
+          pingError.message.includes('ECONNREFUSED');
+        
+        if (!isConnectionError) {
+          // Only log non-connection errors
+          console.error('Database connection error in warehouseMonitor:', pingError.message);
+        }
+        // Set default values when database is unavailable
+        this.metrics.criticalAlerts = 0;
+        this.metrics.lowStockItems = 0;
+        this.metrics.totalProducts = 0;
+        this.metrics.totalBarcodes = 0;
+        this.metrics.totalTransactions = 0;
+        this.metrics.lastHealthCheck = new Date().toISOString();
+        return; // Exit early if connection fails
+      }
 
-      // Get critical alerts count
-      const [alertsResult] = await pool.execute(`
-        SELECT COUNT(*) as count FROM alerts WHERE priority = 'critical' AND is_read = 0
-      `);
-      this.metrics.criticalAlerts = alertsResult[0].count;
+      // Get critical alerts count (using try-catch for each query to handle table not existing)
+      try {
+        const [alertsResult] = await pool.execute(`
+          SELECT COUNT(*) as count FROM alerts WHERE priority = 'critical' AND is_read = 0
+        `);
+        this.metrics.criticalAlerts = alertsResult[0].count;
+      } catch (e) {
+        // Table might not exist, set to 0
+        this.metrics.criticalAlerts = 0;
+      }
 
       // Get low stock items count
-      const [lowStockResult] = await pool.execute(`
-        SELECT COUNT(*) as count FROM products WHERE stock_quantity <= low_stock_threshold
-      `);
-      this.metrics.lowStockItems = lowStockResult[0].count;
+      try {
+        const [lowStockResult] = await pool.execute(`
+          SELECT COUNT(*) as count FROM products WHERE stock_quantity <= low_stock_threshold
+        `);
+        this.metrics.lowStockItems = lowStockResult[0].count;
+      } catch (e) {
+        this.metrics.lowStockItems = 0;
+      }
 
       // Get total counts
-      const [productsResult] = await pool.execute(
-        `SELECT COUNT(*) as count FROM products`,
-      );
-      const [barcodesResult] = await pool.execute(
-        `SELECT COUNT(*) as count FROM barcodes`,
-      );
-      const [transactionsResult] = await pool.execute(
-        `SELECT COUNT(*) as count FROM transactions`,
-      );
+      try {
+        const [productsResult] = await pool.execute(
+          `SELECT COUNT(*) as count FROM products`,
+        );
+        this.metrics.totalProducts = productsResult[0].count;
+      } catch (e) {
+        this.metrics.totalProducts = 0;
+      }
 
-      this.metrics.totalProducts = productsResult[0].count;
-      this.metrics.totalBarcodes = barcodesResult[0].count;
-      this.metrics.totalTransactions = transactionsResult[0].count;
+      try {
+        const [barcodesResult] = await pool.execute(
+          `SELECT COUNT(*) as count FROM barcodes`,
+        );
+        this.metrics.totalBarcodes = barcodesResult[0].count;
+      } catch (e) {
+        this.metrics.totalBarcodes = 0;
+      }
+
+      try {
+        const [transactionsResult] = await pool.execute(
+          `SELECT COUNT(*) as count FROM transactions`,
+        );
+        this.metrics.totalTransactions = transactionsResult[0].count;
+      } catch (e) {
+        this.metrics.totalTransactions = 0;
+      }
 
       this.metrics.lastHealthCheck = new Date().toISOString();
     } catch (error) {
       // Only log error if it's not a connection issue to avoid spam
-      if (
-        !error.message.includes('ENETUNREACH') &&
-        !error.message.includes('ECONNREFUSED')
-      ) {
+      const isConnectionError = 
+        error.message.includes('ENETUNREACH') ||
+        error.message.includes('ECONNREFUSED') ||
+        error.code === 'ECONNRESET' ||
+        error.errno === -54;
+      
+      if (!isConnectionError) {
         console.error('Failed to update system metrics:', error);
       }
       // Set default values when database is unavailable

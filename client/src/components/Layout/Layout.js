@@ -78,6 +78,8 @@ const Layout = ({ children }) => {
     }
   );
 
+  const activeAlertsCount = (alertsData?.data?.critical_alerts || 0) + (alertsData?.data?.forecast_alerts || 0);
+
   const handleDrawerToggle = () => {
     setMobileOpen(!mobileOpen);
   };
@@ -113,7 +115,7 @@ const Layout = ({ children }) => {
               <ListItemIcon>
                 {item.text === 'Alerts' ? (
                   <Badge 
-                    badgeContent={alertsData?.data?.summary?.activeAlerts || 0} 
+                    badgeContent={activeAlertsCount} 
                     color="error"
                   >
                     {item.icon}

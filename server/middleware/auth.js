@@ -18,21 +18,47 @@ const authenticateToken = async (req, res, next) => {
     const decoded = jwt.verify(token, JWT_SECRET);
 
     // Get user from database
-    const [rows] = await pool.execute(
-      "SELECT id, username, email, role FROM users WHERE id = ?",
-      [decoded.userId]
-    );
+    try {
+      const [rows] = await pool.execute(
+        "SELECT id, username, email, role FROM users WHERE id = ?",
+        [decoded.userId]
+      );
 
-    if (rows.length === 0) {
-      return res.status(401).json({
+      if (rows.length === 0) {
+        return res.status(401).json({
+          success: false,
+          message: "Invalid token",
+        });
+      }
+
+      req.user = rows[0];
+      next();
+    } catch (dbError) {
+      // Handle database connection errors
+      if (
+        dbError.code === 'ECONNRESET' ||
+        dbError.code === 'ECONNREFUSED' ||
+        dbError.message.includes('ENETUNREACH')
+      ) {
+        console.error('Database connection error during authentication:', dbError.message);
+        return res.status(503).json({
+          success: false,
+          message: "Database connection error. Please try again.",
+        });
+      }
+      // Re-throw other database errors
+      throw dbError;
+    }
+  } catch (error) {
+    // JWT verification errors
+    if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
+      return res.status(403).json({
         success: false,
-        message: "Invalid token",
+        message: "Invalid or expired token",
       });
     }
-
-    req.user = rows[0];
-    next();
-  } catch (error) {
+    // Other errors
+    console.error('Authentication error:', error);
     return res.status(403).json({
       success: false,
       message: "Invalid or expired token",

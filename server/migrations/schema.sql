@@ -72,7 +72,11 @@ CREATE TABLE IF NOT EXISTS low_stock_alerts (
     threshold INTEGER,
     alert_status VARCHAR(20) DEFAULT 'active' CHECK (alert_status IN ('active', 'resolved', 'dismissed')),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    resolved_at TIMESTAMP
+    resolved_at TIMESTAMP,
+    -- Forecast-based alert fields
+    avg_daily_consumption DECIMAL(10, 2),
+    days_until_stockout DECIMAL(10, 2),
+    alert_type VARCHAR(20) DEFAULT 'threshold' CHECK (alert_type IN ('threshold', 'forecast', 'both'))
 );
 
 -- Users table for authentication
@@ -139,12 +143,48 @@ CREATE TRIGGER trigger_update_current_stock
     FOR EACH ROW
     EXECUTE FUNCTION update_current_stock();
 
--- Function to check for low stock and create alerts
+-- Function to calculate average daily stock out for a product
+CREATE OR REPLACE FUNCTION calculate_avg_daily_consumption(p_product_id INTEGER)
+RETURNS DECIMAL(10, 2) AS $$
+DECLARE
+    avg_daily_out DECIMAL(10, 2);
+    total_out INTEGER;
+    days_with_transactions INTEGER;
+BEGIN
+    -- Calculate total stock out in the last 90 days (or all time if less than 90 days)
+    SELECT COALESCE(SUM(quantity), 0) INTO total_out
+    FROM stock_transactions
+    WHERE product_id = p_product_id
+      AND transaction_type = 'OUT'
+      AND created_at >= CURRENT_DATE - INTERVAL '90 days';
+    
+    -- Calculate number of days with transactions (minimum 1 to avoid division by zero)
+    SELECT GREATEST(
+        COUNT(DISTINCT DATE(created_at)),
+        1
+    ) INTO days_with_transactions
+    FROM stock_transactions
+    WHERE product_id = p_product_id
+      AND transaction_type = 'OUT'
+      AND created_at >= CURRENT_DATE - INTERVAL '90 days';
+    
+    -- Calculate average daily consumption
+    avg_daily_out := total_out::DECIMAL / days_with_transactions::DECIMAL;
+    
+    RETURN COALESCE(avg_daily_out, 0);
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to check for low stock and create alerts (with forecast logic)
 CREATE OR REPLACE FUNCTION check_low_stock()
 RETURNS TRIGGER AS $$
 DECLARE
     product_threshold INTEGER;
     total_stock INTEGER;
+    avg_daily_cons DECIMAL(10, 2);
+    days_until_out DECIMAL(10, 2);
+    should_alert BOOLEAN := FALSE;
+    alert_type_val VARCHAR(20) := 'threshold';
 BEGIN
     -- Get product threshold
     SELECT low_stock_threshold INTO product_threshold
@@ -154,10 +194,43 @@ BEGIN
     SELECT COALESCE(SUM(current_quantity), 0) INTO total_stock
     FROM current_stock WHERE product_id = NEW.product_id;
     
-    -- Create alert if stock is low and no active alert exists
-    IF total_stock <= product_threshold THEN
-        INSERT INTO low_stock_alerts (product_id, current_stock, threshold)
-        SELECT NEW.product_id, total_stock, product_threshold
+    -- Calculate average daily consumption
+    avg_daily_cons := calculate_avg_daily_consumption(NEW.product_id);
+    
+    -- Calculate days until stockout (only if there's consumption data)
+    IF avg_daily_cons > 0 AND total_stock > 0 THEN
+        days_until_out := total_stock::DECIMAL / avg_daily_cons;
+    ELSE
+        days_until_out := NULL;
+    END IF;
+    
+    -- Check if alert should be created based on forecast (will run out in 15 days or less)
+    -- Also alert if stock is 0 (critical case)
+    IF total_stock = 0 THEN
+        should_alert := TRUE;
+        alert_type_val := 'forecast';
+    ELSIF days_until_out IS NOT NULL AND days_until_out <= 15 AND total_stock > 0 THEN
+        should_alert := TRUE;
+        alert_type_val := 'forecast';
+    END IF;
+    
+    -- Create alert if conditions are met and no active alert exists
+    IF should_alert THEN
+        INSERT INTO low_stock_alerts (
+            product_id, 
+            current_stock, 
+            threshold,
+            avg_daily_consumption,
+            days_until_stockout,
+            alert_type
+        )
+        SELECT 
+            NEW.product_id, 
+            total_stock, 
+            product_threshold,
+            avg_daily_cons,
+            days_until_out,
+            alert_type_val
         WHERE NOT EXISTS (
             SELECT 1 FROM low_stock_alerts 
             WHERE product_id = NEW.product_id AND alert_status = 'active'

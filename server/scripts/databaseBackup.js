@@ -2,6 +2,7 @@ const { exec } = require('child_process');
 const path = require('path');
 const fs = require('fs-extra');
 const { getDatabaseConfig, getDatabaseName } = require('../config/database');
+const { uploadToMega, cleanupOldMegaFiles } = require('../services/megaUpload');
 
 /**
  * Creates a backup of the MySQL database
@@ -50,7 +51,7 @@ async function backupDatabase() {
       console.log(`[BACKUP] Command: ${mysqldumpCmd} ... (password hidden)`);
 
       // Execute mysqldump
-      exec(cmd, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
+      exec(cmd, { maxBuffer: 1024 * 1024 * 10 }, async (error, stdout, stderr) => {
         if (error) {
           console.error(`[BACKUP] Error creating backup:`, error);
           resolve({
@@ -69,11 +70,34 @@ async function backupDatabase() {
           const stats = fs.statSync(backupFilePath);
           if (stats.size > 0) {
             console.log(`[BACKUP] Backup created successfully: ${backupFileName} (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
+            
+            // Upload to Mega cloud storage
+            console.log(`[BACKUP] Uploading backup to Mega...`);
+            const megaResult = await uploadToMega(backupFilePath, 'Cloud drive/app-backup/wms');
+            
+            if (megaResult.success) {
+              console.log(`[BACKUP] ✓ Backup uploaded to Mega successfully`);
+              console.log(`[BACKUP] Mega URL: ${megaResult.url}`);
+              
+              // Cleanup old backups from Mega (keep last 30)
+              console.log(`[BACKUP] Cleaning up old backups from Mega...`);
+              const cleanupResult = await cleanupOldMegaFiles('Cloud drive/app-backup/wms', 30);
+              if (cleanupResult.success) {
+                console.log(`[BACKUP] Mega cleanup: ${cleanupResult.message || `Deleted ${cleanupResult.deleted || 0} old file(s)`}`);
+              }
+            } else {
+              console.error(`[BACKUP] ✗ Mega upload failed: ${megaResult.error}`);
+              // Still return success for local backup even if Mega upload fails
+            }
+            
             resolve({
               success: true,
               filePath: backupFilePath,
               fileName: backupFileName,
-              size: stats.size
+              size: stats.size,
+              megaUpload: megaResult.success,
+              megaUrl: megaResult.url || null,
+              megaError: megaResult.error || null
             });
           } else {
             console.error(`[BACKUP] Backup file is empty`);

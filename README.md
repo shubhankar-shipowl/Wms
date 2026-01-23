@@ -27,9 +27,10 @@ A comprehensive warehouse management system built with Node.js, React, and Postg
 
 - **Real-time Stock Tracking**: Live inventory levels with automatic updates
 - **Flexible Unit Allocation**: Equal split or manual distribution options
-- **Low Stock Alerts**: Automated notifications when inventory falls below thresholds
+- **Low Stock Alerts**: Intelligent forecast-based alerts that predict when products will run out in the next 15 days based on average daily consumption from historical stock out data
 - **Stock Movement Analytics**: Comprehensive tracking of all inventory changes
 - **Multi-level Stock Validation**: Prevents overselling and stock discrepancies
+- **Automated Database Backups**: Daily automated backups with cloud storage integration (Mega) - backups are automatically uploaded to Mega cloud storage
 
 ### 📈 Analytics & Reporting
 
@@ -122,6 +123,10 @@ DB_PASSWORD=your_password
 JWT_SECRET=your-super-secret-jwt-key
 PORT=5000
 CLIENT_URL=http://localhost:3000
+
+# Mega Cloud Storage Configuration (for database backups)
+MEGA_EMAIL=your-email@example.com
+MEGA_PASSWORD=your-mega-password
 ```
 
 #### Run Database Migrations
@@ -242,9 +247,14 @@ The application will be available at:
 
 ### Alert Endpoints
 
-- `GET /api/alerts/low-stock` - Get low stock alerts
-- `GET /api/alerts/summary` - Get alert summary
-- `POST /api/alerts/check-low-stock` - Manually trigger stock check
+- `GET /api/alerts/low-stock` - Get low stock alerts (forecast-based only)
+  - Returns products that are:
+    - Out of stock (critical alerts)
+    - Predicted to run out in 15 days or less based on average daily consumption (forecast-based alerts)
+  - Response includes: `avg_daily_consumption`, `days_until_stockout`, `alert_type` (forecast)
+  - Critical alerts: Stock = 0 or days until stockout ≤ 3 days
+- `GET /api/alerts/summary` - Get alert summary (includes forecast alert counts)
+- `POST /api/alerts/check-low-stock` - Manually trigger stock check (includes forecast analysis)
 - `POST /api/alerts/bulk-action` - Bulk resolve/dismiss alerts
 
 ### Dashboard Endpoints
