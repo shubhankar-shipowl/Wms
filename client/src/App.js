@@ -16,6 +16,8 @@ import Alerts from "./pages/Alerts";
 import Reports from "./pages/Reports";
 import Settings from "./pages/Settings";
 import Reconciliation from "./pages/Reconciliation";
+import Labels from "./pages/Labels"; // Added import
+import PickList from "./pages/PickList"; // Pick List page
 import LoadingSpinner from "./components/Common/LoadingSpinner";
 
 function App() {
@@ -50,6 +52,8 @@ function App() {
           <Route path="/barcodes" element={<Barcodes />} />
           <Route path="/scanner" element={<BarcodeScanner />} />
           <Route path="/reconciliation" element={<Reconciliation />} />
+          <Route path="/labels" element={<Labels />} /> {/* Added route */}
+          <Route path="/picklist" element={<PickList />} /> {/* Pick List */}
           <Route path="/alerts" element={<Alerts />} />
           {isAdmin && (
             <>

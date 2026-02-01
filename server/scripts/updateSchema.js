@@ -45,19 +45,34 @@ async function updateSchema() {
       console.log("origin column does not exist");
     }
 
-    // Check if description column exists and remove it
+    // Check if description column exists
     const [checkDescription] = await pool.execute(`
       SELECT column_name 
       FROM information_schema.columns 
       WHERE table_name = 'products' AND column_name = 'description'
     `);
 
-    if (checkDescription.length > 0) {
-      console.log("Removing description column...");
-      await pool.execute("ALTER TABLE products DROP COLUMN description");
-      console.log("description column removed successfully");
+    if (checkDescription.length === 0) {
+      console.log("Adding description column...");
+      await pool.execute("ALTER TABLE products ADD COLUMN description TEXT");
+      console.log("description column added successfully");
     } else {
-      console.log("description column does not exist");
+      console.log("description column already exists");
+    }
+
+    // Check if images column exists
+    const [checkImages] = await pool.execute(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'products' AND column_name = 'images'
+    `);
+
+    if (checkImages.length === 0) {
+      console.log("Adding images column...");
+      await pool.execute("ALTER TABLE products ADD COLUMN images JSON DEFAULT NULL");
+      console.log("images column added successfully");
+    } else {
+      console.log("images column already exists");
     }
 
     console.log("Database schema update completed successfully");

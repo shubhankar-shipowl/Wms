@@ -1,18 +1,42 @@
 const fs = require('fs');
 const path = require('path');
-const pool = require('../config/database');
+const { pool, getDatabaseConfig } = require('../config/database');
+const mysql = require('mysql2/promise');
 
 async function runMigrations() {
   try {
     console.log('Running database migrations...');
     
-    const schemaSQL = fs.readFileSync(
-      path.join(__dirname, 'schema.sql'),
-      'utf8'
-    );
-    
-    await pool.query(schemaSQL);
-    console.log('Database schema created successfully!');
+    // Create a specific connection for migration to enable multipleStatements
+    const config = getDatabaseConfig();
+    const connection = await mysql.createConnection({
+      ...config,
+      multipleStatements: true
+    });
+
+    try {
+        const schemaSQL = fs.readFileSync(
+          path.join(__dirname, 'create-mysql-schema.sql'),
+          'utf8'
+        );
+        
+        // Remove DELIMITER commands as they are client-side only and not needed for driver execution
+        // Also replace custom delimiters // with ; if necessary, but the driver generally handles parsing if multipleStatements is true
+        // and we remove the DELIMITER lines.
+        // Actually, for triggers, we need to be careful.
+        // Simple approach: Remove "DELIMITER //" and "DELIMITER ;" lines.
+        // Replace "//" at end of blocks with ";"
+        
+        let cleanSQL = schemaSQL
+            .replace(/DELIMITER \/\//g, '')
+            .replace(/DELIMITER ;/g, '')
+            .replace(/\/\/$/gm, ';'); // Replace // at end of lines with ;
+
+        await connection.query(cleanSQL);
+        console.log('Database schema created successfully!');
+    } finally {
+        await connection.end();
+    }
     
     // Insert default admin user
     const bcrypt = require('bcryptjs');
@@ -20,11 +44,15 @@ async function runMigrations() {
     
     await pool.query(`
       INSERT INTO users (username, email, password_hash, role)
-      VALUES ('admin', 'admin@wms.com', $1, 'admin')
-      ON CONFLICT (username) DO NOTHING
+      VALUES ('admin', 'admin@wms.com', ?, 'admin')
+      ON DUPLICATE KEY UPDATE id=id
     `, [defaultPassword]);
+    // Note: ON CONFLICT is Postgres, MySQL uses ON DUPLICATE KEY UPDATE or INSERT IGNORE
+    // schema.sql user insert uses INSERT IGNORE, so maybe we don't need this block if schema includes it?
+    // create-mysql-schema.sql ALREADY inserts admin user. So we should probably skip this or wrap in try/catch or use valid MySQL syntax.
+    // The schema file has: INSERT IGNORE INTO users ...
     
-    console.log('Default admin user created (username: admin, password: admin123)');
+    console.log('Default admin user check completed.');
     
     // Insert sample data
     await insertSampleData();
@@ -36,6 +64,7 @@ async function runMigrations() {
     process.exit(1);
   }
 }
+
 
 async function insertSampleData() {
   try {
@@ -90,13 +119,13 @@ async function insertSampleData() {
     
     for (const product of products) {
       // First check if the product already exists
-      const existingProduct = await pool.query('SELECT id FROM products WHERE sku = $1', [product.sku]);
+      const [existingProduct] = await pool.query('SELECT id FROM products WHERE sku = ?', [product.sku]);
       
-      if (existingProduct.rows.length === 0) {
+      if (existingProduct.length === 0) {
         await pool.query(`
-          INSERT INTO products (name, sku, price, initial_stock, current_stock, hsn_code, gst_rate, origin, low_stock_threshold)
-          VALUES ($1, $2, $3, $4, $4, $5, $6, $7, $8)
-        `, [product.name, product.sku, product.price, product.initial_stock, product.hsn_code, product.gst_rate, product.origin, 10]);
+          INSERT INTO products (name, sku, price, initial_stock, current_stock, hsn_code, gst_rate, low_stock_threshold)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `, [product.name, product.sku, product.price, product.initial_stock, product.initial_stock, product.hsn_code, product.gst_rate, 10]);
       }
     }
     
@@ -113,24 +142,24 @@ async function insertSampleData() {
     ];
     
     for (const barcode of barcodes) {
-      const productResult = await pool.query('SELECT id FROM products WHERE sku = $1', [barcode.sku]);
-      if (productResult.rows.length > 0) {
-        const productId = productResult.rows[0].id;
+      const [productResult] = await pool.query('SELECT id FROM products WHERE sku = ?', [barcode.sku]);
+      if (productResult.length > 0) {
+        const productId = productResult[0].id;
         
         await pool.query(`
           INSERT INTO barcodes (product_id, barcode, units_assigned)
-          VALUES ($1, $2, $3)
-          ON CONFLICT (barcode) DO NOTHING
+          VALUES (?, ?, ?)
+          ON DUPLICATE KEY UPDATE id=id
         `, [productId, barcode.barcode, barcode.units]);
         
         // Insert initial stock transaction
-        const barcodeResult = await pool.query('SELECT id FROM barcodes WHERE barcode = $1', [barcode.barcode]);
-        if (barcodeResult.rows.length > 0) {
-          const barcodeId = barcodeResult.rows[0].id;
+        const [barcodeResult] = await pool.query('SELECT id FROM barcodes WHERE barcode = ?', [barcode.barcode]);
+        if (barcodeResult.length > 0) {
+          const barcodeId = barcodeResult[0].id;
           
           await pool.query(`
             INSERT INTO stock_transactions (product_id, barcode_id, transaction_type, quantity, reference_number, notes, created_by)
-            VALUES ($1, $2, 'IN', $3, 'INITIAL_STOCK', 'Initial stock entry', 'system')
+            VALUES (?, ?, 'IN', ?, 'INITIAL_STOCK', 'Initial stock entry', 'system')
           `, [productId, barcodeId, barcode.units]);
         }
       }

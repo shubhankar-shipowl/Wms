@@ -137,7 +137,10 @@ app.use("/api/direct-print", require("./routes/direct-print"));
 app.use("/api/stock", require("./routes/stock"));
 app.use("/api/system", require("./routes/system"));
 app.use("/api/update-barcodes", require("./routes/update-barcodes"));
+app.use("/api/update-barcodes", require("./routes/update-barcodes"));
 app.use("/api/reconciliation", require("./routes/reconciliation"));
+app.use("/api/labels", require("./routes/labels")); // Added missing route
+app.use("/api/picklist", require("./routes/picklist")); // Pick list generation
 
 // Socket.IO connection handling
 io.on("connection", (socket) => {
@@ -278,7 +281,8 @@ process.on("uncaughtException", (err) => {
 // Handle unhandled promise rejections
 process.on("unhandledRejection", (reason, promise) => {
   console.error("Unhandled Rejection at:", promise, "reason:", reason);
-  process.exit(1);
+  // Don't exit the process for unhandled rejections to keep the server running
+  // process.exit(1); 
 });
 
 module.exports = { app, io };
