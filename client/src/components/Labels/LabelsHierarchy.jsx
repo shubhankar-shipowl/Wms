@@ -54,7 +54,7 @@ const CourierGroup = ({ courier, storeName, onView, onDownload, onDelete }) => (
           size="small" 
           onClick={(e) => {
             e.stopPropagation();
-            onDownload('courier', courier.courier_name, storeName);
+            onDownload('courier', courier.courier_name);
           }}
         >
           <Download fontSize="small" />
@@ -75,48 +75,10 @@ const CourierGroup = ({ courier, storeName, onView, onDownload, onDelete }) => (
   </Accordion>
 );
 
-const StoreGroup = ({ store, onView, onDownload, onDelete }) => (
-  <Accordion defaultExpanded={true} sx={{ mb: 2 }}>
-    <AccordionSummary expandIcon={<ExpandMore />} sx={{ bgcolor: '#e3f2fd' }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', width: '100%' }}>
-        <Store color="primary" sx={{ mr: 2 }} />
-        <Typography variant="subtitle1" sx={{ flexGrow: 1, fontWeight: 'bold' }}>
-          {store.store_name}
-        </Typography>
-        <Chip 
-          label={`${store.total_products} products`} 
-          color="primary" 
-          size="small" 
-          sx={{ mr: 2 }} 
-        />
-         <IconButton 
-          size="small" 
-          onClick={(e) => {
-            e.stopPropagation();
-            onDownload('store', store.store_name);
-          }}
-        >
-          <Download />
-        </IconButton>
-      </Box>
-    </AccordionSummary>
-    <AccordionDetails sx={{ p: 0 }}>
-      {store.couriers.map(courier => (
-        <CourierGroup 
-          key={courier.courier_name} 
-          courier={courier}
-          storeName={store.store_name}
-          onView={onView}
-          onDownload={onDownload}
-          onDelete={onDelete}
-        />
-      ))}
-    </AccordionDetails>
-  </Accordion>
-);
 
-const LabelsHierarchy = ({ data, onView, onDownload, onDelete }) => {
-  if (!data || data.length === 0) {
+
+const LabelsHierarchy = ({ couriers, onView, onDownload, onDelete }) => {
+  if (!couriers || couriers.length === 0) {
     return (
       <Box sx={{ p: 4, textAlign: 'center' }}>
         <Typography color="textSecondary">
@@ -128,10 +90,10 @@ const LabelsHierarchy = ({ data, onView, onDownload, onDelete }) => {
 
   return (
     <Box sx={{ mt: 2 }}>
-      {data.map(store => (
-        <StoreGroup 
-          key={store.store_name} 
-          store={store} 
+      {couriers.map(courier => (
+        <CourierGroup 
+          key={courier.courier_name} 
+          courier={courier}
           onView={onView}
           onDownload={onDownload}
           onDelete={onDelete}

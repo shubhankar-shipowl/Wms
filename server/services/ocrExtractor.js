@@ -1,213 +1,287 @@
-const path = require('path');
-const fs = require('fs');
+
 const sharp = require('sharp');
+const fs = require('fs');
+const path = require('path');
 const Tesseract = require('tesseract.js');
 const { execSync } = require('child_process');
 
-// Known couriers for matching
-const KNOWN_COURIERS = [
-  'XPRESSBEES', 'DELHIVERY', 'BLUEDART', 
-  'DTDC', 'ECOM EXPRESS', 'FEDEX', 'DHL',
-  'SHADOWFAX', 'EKART', 'INDIA POST', 
-  'SPEED POST', 'GATI', 'PROFESSIONAL'
-];
-
 /**
- * Extract courier name from PDF label using OCR on the courier logo region
- * @param {string} pdfPath - Path to the PDF file
- * @returns {Promise<string>} - Detected courier name or empty string
+ * Extracts Amazon product text from a high-res PDF render using pixel projection.
+ * @param {string} pdfPath 
+ * @returns {Promise<string>}
  */
-async function extractCourierFromImage(pdfPath) {
-  // Region: Top Right 30% (Standard location for many courier logos, increased from 20%)
-  const text = await extractTextFromRegion(pdfPath, {
-    leftPercent: 0.5,
-    topPercent: 0,
-    widthPercent: 0.5,
-    heightPercent: 0.3
-  });
-
-  return matchCourierName(text);
-}
-
-/**
- * Extract Store/Brand name from PDF label using OCR
- * @param {string} pdfPath - Path to the PDF file
- * @returns {Promise<string>} - Detected store name
- */
-async function extractStoreFromImage(pdfPath) {
-  // Region: Top Right 20% (Same as courier usually, but we treat result differently)
-  // ShoppersKart logo is top right.
-  const text = await extractTextFromRegion(pdfPath, {
-    leftPercent: 0.5,
-    topPercent: 0,
-    widthPercent: 0.5,
-    heightPercent: 0.2
-  });
-  
-  if (!text) return '';
-
-  // Clean the text
-  // 1. Remove known couriers (we don't want to mistake courier for store)
-  const courier = matchCourierName(text);
-  if (courier) {
-    // If exact match of a courier name, likely it IS the courier logo, not store
-    // unless the store name contains the courier name (rare)
-    return '';
-  }
-
-  // 2. Remove common label words
-  let cleanText = text
-    .replace(/\b(To|From|Ship|Bill|Date|Invoice|Order|No|COD|Prepaid|Standard|Express)\b/gi, '')
-    .trim();
+async function extractAmazonProduct(pdfPath) {
+    const tempDir = '/tmp/amazon-ocr-' + Date.now();
+    fs.mkdirSync(tempDir, { recursive: true });
     
-  // 3. Remove non-word characters from ends
-  cleanText = cleanText.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, '');
-  
-  // 4. Split lines and take the most prominent one (likely brand name)
-  const lines = cleanText.split('\n').map(l => l.trim()).filter(l => l.length > 2);
-  
-  if (lines.length > 0) {
-    // Return the longest line usually? Or the first?
-    // Start with first line that looks like a name
-    for (const line of lines) {
-       // Filter out garbage OCR
-       if (/^[a-zA-Z0-9\s&'-]+$/.test(line)) {
-         // Fix: Remove leading numbers (often barcode artifacts like "70 DAZARA")
-         // e.g., "70 DAZARA" -> "DAZARA"
-         const cleanedLine = line.replace(/^\d+\s*/, '').trim();
-         
-         if (cleanedLine.length > 2) {
-             return cleanedLine;
-         }
-       }
-    }
-  }
+    let worker = null;
 
-  return '';
-}
-
-/**
- * Core function to extract text from a specific region of the PDF
- */
-async function extractTextFromRegion(pdfPath, region) {
-  const tempDir = path.join(path.dirname(pdfPath), 'ocr-temp-' + Date.now());
-  
-  try {
-    if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir, { recursive: true });
-    }
-
-    // 1. Convert PDF to image
-    const outputPrefix = path.join(tempDir, 'page');
     try {
-      // Increased scale to 3000 for better OCR accuracy on small text
-      execSync(`pdftocairo -png -f 1 -l 1 -scale-to 3000 "${pdfPath}" "${outputPrefix}"`, {
-        stdio: 'pipe'
-      });
-    } catch (cmdError) {
-      console.error('pdftocairo command failed:', cmdError.message);
-      cleanupTempFiles(tempDir);
-      return '';
-    }
+        // 1. Render PDF to High-Res PNG (6000px height is good for detail)
+        console.log('[OCR] Rendering PDF...');
+        const outputPrefix = path.join(tempDir, 'page');
+        // usage of pdftocairo (poppler)
+        execSync(`pdftocairo -png -f 1 -l 1 -scale-to 6000 "${pdfPath}" "${outputPrefix}"`, { stdio: 'pipe' });
+        
+        const files = fs.readdirSync(tempDir);
+        const pngFile = files.find(f => f.endsWith('.png'));
+        if (!pngFile) throw new Error('PDF conversion failed');
+        
+        const imagePath = path.join(tempDir, pngFile);
+        
+        // 2. Crop Layout Area (35% to 55%)
+        const metadata = await sharp(imagePath).metadata();
+        const cropTop = Math.floor(metadata.height * 0.35);
+        const cropHeight = Math.floor(metadata.height * 0.20);
+        
+        const { data: rawData, info } = await sharp(imagePath)
+            .extract({ left: 0, top: cropTop, width: metadata.width, height: cropHeight })
+            .grayscale()
+            .raw()
+            .toBuffer({ resolveWithObject: true });
 
-    const files = fs.readdirSync(tempDir);
-    const pngFile = files.find(f => f.startsWith('page') && f.endsWith('.png'));
+        // 3. Pixel Projection (Horizontal)
+        // Count dark pixels per row
+        const rowDensity = new Array(info.height).fill(0);
+        for (let y = 0; y < info.height; y++) {
+            let sum = 0;
+            const rowOffset = y * info.width;
+            for (let x = 0; x < info.width; x += 10) { // sample every 10th
+                if (rawData[rowOffset + x] < 200) sum++;
+            }
+            rowDensity[y] = sum;
+        }
+        
+        // 4. Find Blobs (Text Lines)
+        const blobs = [];
+        let inBlob = false;
+        let startY = 0;
+        const LINE_THRESHOLD = 5; // density threshold
+        const MIN_BLOB_HEIGHT = 10;
+        
+        for (let y = 0; y < info.height; y++) {
+            const hasContent = rowDensity[y] > LINE_THRESHOLD;
+            if (hasContent && !inBlob) {
+                inBlob = true;
+                startY = y;
+            } else if (!hasContent && inBlob) {
+                inBlob = false;
+                if (y - startY > MIN_BLOB_HEIGHT) {
+                    blobs.push({ y: startY, h: y - startY });
+                }
+            }
+        }
+        
+        // 5. OCR Process
+        worker = await Tesseract.createWorker('eng');
+        
+        let headerIndex = -1;
+        
+        // Pass 1: Identitfy Structure
+        for (let i = 0; i < Math.min(blobs.length, 5); i++) {
+            const blob = blobs[i];
+            const blobTop = Math.max(0, cropTop + blob.y - 10);
+            const blobH = blob.h + 20;
+            
+            const blobBuffer = await sharp(imagePath)
+                .extract({ left: 0, top: blobTop, width: metadata.width, height: blobH })
+                .toBuffer();
+                
+            const { data } = await worker.recognize(blobBuffer);
+            const text = data.text.trim();
+            console.log(`[OCR] Line ${i}: "${text}"`);
+            
+            if (text.match(/Item\s*description/i)) {
+                headerIndex = i;
+                break;
+            }
+        }
+        
+        if (headerIndex !== -1 && headerIndex + 1 < blobs.length) {
+            // Product is the next blob
+            const productBlob = blobs[headerIndex + 1];
+            console.log('[OCR] Target Blob identified.');
+            
+            const prodTop = cropTop + productBlob.y - 10;
+            const prodH = productBlob.h + 20;
+            
+            const prodBuffer = await sharp(imagePath)
+                .extract({ left: 0, top: prodTop, width: metadata.width, height: prodH })
+                .toBuffer();
+            
+            const { data } = await worker.recognize(prodBuffer);
+            let productText = data.text.trim();
+            
+            // CLEANUP
+            // "Garden Manual Sprayer QTY -1" -> "Garden Manual Sprayer"
+            productText = productText.replace(/QTY.*$/i, '')        // Remove QTY...
+                                     .replace(/[\|\d\[\]]+$/g, '')  // Remove trailing pipes/digits
+                                     .replace(/^[\|\d\s\[\]]+/g, '') // Remove leading garbage ([4 | )
+                                     .replace(/[^\w\s\(\)-]/g, '')   // Remove weird special chars
+                                     .trim();
+                                     
+            return productText;
+        }
+        
+        return null;
+
+    } catch (err) {
+        console.error('[OCR Error]', err);
+        return null;
+    } finally {
+        if (worker) await worker.terminate();
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+}
+
+// Execute if run directly
+if (require.main === module) {
+    const PDF_PATH = '/Users/shubhankarhaldar/Desktop/Wms/manifest - 2026-01-29T145424.413-20-21 (1)-2.pdf';
+    extractAmazonProduct(PDF_PATH).then(name => {
+        console.log('\n==========================================');
+        console.log('EXTRACTED PRODUCT NAME:', name);
+        console.log('==========================================\n');
+    });
+}
+
+
+/**
+ * Wrapper to match the signature expected by pdfExtractor.js
+ * Returns an object with products array and courier info
+ */
+async function extractLabelDataFromPdf(pdfPath) { 
+    try {
+        const product = await extractAmazonProduct(pdfPath);
+        if (product) {
+            return {
+                products: [{
+                    product_name: product,
+                    quantity: 1, // OCR usually processes one item at a time for this specific fallback
+                    price: 0
+                }],
+                courier_name: 'Amazon Shipping' // If this worked, it's likely Amazon
+            };
+        }
+        return { products: [] };
+    } catch (e) {
+        console.error('[OCR Wrapper] Error:', e);
+        return { products: [] };
+    }
+}
+
+async function extractCourierFromImage(pdfPath) {
+    const tempDir = '/tmp/ocr-courier-' + Date.now();
+    fs.mkdirSync(tempDir, { recursive: true });
+    let worker = null;
+
+    try {
+        console.log('[OCR] Extracting courier from image...');
+        const outputPrefix = path.join(tempDir, 'page');
+        // Low scale (2000) is enough for courier logo headers usually
+        execSync(`pdftocairo -png -f 1 -l 1 -scale-to 2000 "${pdfPath}" "${outputPrefix}"`, { stdio: 'pipe' });
+        
+        const files = fs.readdirSync(tempDir);
+        const pngFile = files.find(f => f.endsWith('.png'));
+        if (!pngFile) return null;
+        
+        const imagePath = path.join(tempDir, pngFile);
+        const metadata = await sharp(imagePath).metadata();
+        
+        // Crop Top 30% of the page
+        const cropHeight = Math.floor(metadata.height * 0.30);
+        
+        const buffer = await sharp(imagePath)
+             .extract({ left: 0, top: 0, width: metadata.width, height: cropHeight })
+             .toBuffer();
+             
+        worker = await Tesseract.createWorker('eng');
+        const { data } = await worker.recognize(buffer);
+        const text = data.text;
+        
+        console.log('[OCR] Courier Search Text:', text.substring(0, 100).replace(/\n/g, ' '));
+        
+        // Courier Regex Patterns
+        const patterns = [
+             { regex: /XPRESS\s*BEES/i, name: 'Xpressbees' },
+             { regex: /XYXPRESSEBEES/i, name: 'Xpressbees' }, // Specific artifact
+             { regex: /PRESSEBEES/i, name: 'Xpressbees' },
+             { regex: />>XPRESS/i, name: 'Xpressbees' },
+             { regex: /DELHIVERY/i, name: 'Delhivery' },
+             { regex: /DELHIV/i, name: 'Delhivery' },
+             { regex: /BLUE\s*DART/i, name: 'Blue Dart' },
+             { regex: /DTDC/i, name: 'DTDC' },
+             { regex: /ECOM\s*EXPRESS/i, name: 'Ecom Express' },
+             { regex: /SHIP\s*ROCKET/i, name: 'Shiprocket' },
+             { regex: /EKART/i, name: 'Ekart' },
+             { regex: /AMAZON\s*SHIPPING/i, name: 'Amazon Shipping' }
+        ];
+        
+        for (const p of patterns) {
+            if (p.regex.test(text)) {
+                console.log(`[OCR] Courier identified: ${p.name}`);
+                return p.name;
+            }
+        }
+        
+        return null;
+
+    } catch (e) {
+        console.error('[OCR] Extract courier failed:', e);
+        return null; 
+    } finally {
+        if (worker) await worker.terminate();
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+}
+
+async function extractStoreFromImage(pdfPath) {
+    return null;
+}
+
+async function extractTextFromRegion(pdfPath, region) {
+    // Basic implementation of region extraction
+    // region: { leftPercent, topPercent, widthPercent, heightPercent }
+    const tempDir = '/tmp/ocr-region-' + Date.now();
+    fs.mkdirSync(tempDir, { recursive: true });
+    let worker = null;
     
-    if (!pngFile) {
-      cleanupTempFiles(tempDir);
-      return '';
+    try {
+        const outputPrefix = path.join(tempDir, 'page');
+        execSync(`pdftocairo -png -f 1 -l 1 -scale-to 2000 "${pdfPath}" "${outputPrefix}"`, { stdio: 'pipe' });
+        
+        const files = fs.readdirSync(tempDir);
+        const pngFile = files.find(f => f.endsWith('.png'));
+        if (!pngFile) return '';
+        
+        const imagePath = path.join(tempDir, pngFile);
+        const metadata = await sharp(imagePath).metadata();
+        
+        const left = Math.floor(metadata.width * region.leftPercent);
+        const top = Math.floor(metadata.height * region.topPercent);
+        const width = Math.floor(metadata.width * region.widthPercent);
+        const height = Math.floor(metadata.height * region.heightPercent);
+        
+        const buffer = await sharp(imagePath)
+             .extract({ left, top, width, height })
+             .toBuffer();
+             
+        worker = await Tesseract.createWorker('eng');
+        const { data } = await worker.recognize(buffer);
+        return data.text;
+        
+    } catch (e) {
+        console.error('Region OCR failed', e);
+        return '';
+    } finally {
+        if (worker) await worker.terminate();
+        fs.rmSync(tempDir, { recursive: true, force: true });
     }
-
-    const imagePath = path.join(tempDir, pngFile);
-
-    // 2. Crop
-    const metadata = await sharp(imagePath).metadata();
-    const { width, height } = metadata;
-
-    const left = Math.floor(width * region.leftPercent);
-    const top = Math.floor(height * region.topPercent);
-    const cropWidth = Math.floor(width * region.widthPercent);
-    const cropHeight = Math.floor(height * region.heightPercent);
-
-    const cropBuffer = await sharp(imagePath)
-      .extract({ left, top, width: cropWidth, height: cropHeight })
-      .grayscale()
-      .normalize() 
-      .sharpen() // Enhance edges
-      .toBuffer();
-
-    // 3. OCR (PSM 6 = Assume a single uniform block of text)
-    const { data: { text } } = await Tesseract.recognize(
-      cropBuffer,
-      'eng',
-      { 
-        logger: m => {},
-        tessedit_pageseg_mode: '6'
-      }
-    );
-
-    cleanupTempFiles(tempDir);
-    return text;
-
-  } catch (error) {
-    console.error('OCR region extraction error:', error);
-    if (fs.existsSync(tempDir)) cleanupTempFiles(tempDir);
-    return '';
-  }
 }
 
-/**
- * Match OCR text against known courier names
- * @param {string} ocrText - Raw OCR text
- * @returns {string} - Matched courier name or empty string
- */
-function matchCourierName(ocrText) {
-  if (!ocrText) return '';
-  
-  // Clean up symbols that might confuse matching (like logo graphics ">>>", "_", "-")
-  const textUpper = ocrText.toUpperCase()
-    .replace(/[^A-Z0-9\s]/g, ' ') // Replace non-alphanumeric with space
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  // Create a condensed version (no spaces) to catch "X P R E S S B E E S"
-  const textCondensed = textUpper.replace(/\s+/g, '');
-  
-  for (const courier of KNOWN_COURIERS) {
-    // Check both standard (spaced) and condensed versions
-    if (textUpper.includes(courier) || textCondensed.includes(courier)) {
-      return courier.charAt(0) + courier.slice(1).toLowerCase();
-    }
-  }
-  
-  if (textUpper.includes('XPRESS') || textUpper.includes('BEES')) return 'Xpressbees';
-  if (textCondensed.includes('XPRESS') && textCondensed.includes('BEES')) return 'Xpressbees'; // Catch splitted
-  
-  if (textUpper.includes('DELH') || textUpper.includes('VERY')) return 'Delhivery';
-  if (textUpper.includes('BLUE') || textUpper.includes('DART')) return 'BlueDart';
-  if (textUpper.includes('KART') && !textUpper.includes('SHOPPERS')) return 'Ekart'; // Ensure we don't match ShoppersKart as Ekart if Kart is present
-  
-  return '';
-}
-
-/**
- * Cleanup temporary OCR files
- */
-function cleanupTempFiles(tempDir) {
-  try {
-    if (fs.existsSync(tempDir)) {
-      const files = fs.readdirSync(tempDir);
-      files.forEach(file => fs.unlinkSync(path.join(tempDir, file)));
-      fs.rmdirSync(tempDir);
-    }
-  } catch (e) {
-    console.error('OCR cleanup error:', e);
-  }
-}
-
-module.exports = {
-  extractCourierFromImage,
-  extractStoreFromImage,
-  matchCourierName,
-  extractTextFromRegion
+module.exports = { 
+    extractAmazonProduct,
+    extractLabelDataFromPdf,
+    extractCourierFromImage,
+    extractStoreFromImage,
+    extractTextFromRegion
 };

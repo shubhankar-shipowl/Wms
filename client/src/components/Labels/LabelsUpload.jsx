@@ -7,6 +7,7 @@ import {
 import { CloudUpload, PictureAsPdf, Delete, CheckCircle, Error as ErrorIcon } from '@mui/icons-material';
 import { useDropzone } from 'react-dropzone';
 import axios from 'axios';
+import { toast } from 'react-hot-toast';
 
 const LabelsUpload = ({ onUploadSuccess }) => {
   const [files, setFiles] = useState([]);
@@ -43,9 +44,39 @@ const LabelsUpload = ({ onUploadSuccess }) => {
       });
 
       if (response.data.success) {
+        const { processed, failed } = response.data;
+        
         setResults(response.data);
         onUploadSuccess && onUploadSuccess();
         setFiles([]); // Clear queue on success
+
+        // Show generic success toast
+        if (processed.length > 0) {
+            toast.success(`Successfully processed ${processed.length} labels`);
+        }
+
+        // Show specific error toasts for duplicates or other failures
+        if (failed && failed.length > 0) {
+            // Group duplicate errors
+            const duplicates = failed.filter(item => item.error.includes('Duplicate'));
+            const otherErrors = failed.filter(item => !item.error.includes('Duplicate'));
+
+            // Show single toast for duplicates
+            if (duplicates.length > 0) {
+                toast.error(
+                    `Skipped ${duplicates.length} duplicate label(s).`,
+                    { 
+                        duration: 5000,
+                        icon: '⚠️'
+                    }
+                );
+            }
+
+            // Show individual toasts for other errors
+            otherErrors.forEach(item => {
+                toast.error(`${item.file}: ${item.error}`, { duration: 4000 });
+            });
+        }
       }
     } catch (err) {
       console.error(err);

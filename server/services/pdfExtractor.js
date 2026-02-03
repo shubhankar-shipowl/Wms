@@ -1,7 +1,7 @@
 const pdfParseModule = require('pdf-parse');
 const fs = require('fs');
 const path = require('path');
-const { extractCourierFromImage, extractStoreFromImage, extractTextFromRegion } = require('./ocrExtractor');
+const { extractCourierFromImage, extractStoreFromImage, extractTextFromRegion, extractLabelDataFromPdf } = require('./ocrExtractor');
 
 /**
  * Extract metadata from PDF label
@@ -56,33 +56,8 @@ async function extractLabelMetadata(filePath) {
       console.error('Failed to write debug text', e);
     }
 
-    // Extract brand name (usually at the top, left side)
-    let brandName = extractBrandName(text);
-
-    // Try extracting from Email if brand not found at top (for ShoppersKart email case)
-    if (!brandName) {
-      brandName = extractBrandFromEmail(text);
-    }
-    
-    // Amazon Specific: "Ordered From:" check (overrides existing if found)
-    const amazonBrand = extractAmazonBrand(text);
-    if (amazonBrand) {
-      brandName = amazonBrand;
-    }
-
-    // Use OCR for Brand/Store Name if text extraction failed and we don't have a brand yet
-    if (!brandName) {
-       console.log('Text extraction failed for brand, trying OCR...');
-       try {
-         const ocrBrand = await extractStoreFromImage(filePath);
-         if (ocrBrand) {
-           console.log('OCR detected brand:', ocrBrand);
-           brandName = ocrBrand;
-         }
-       } catch (ocrError) {
-         console.error('OCR brand fallback failed:', ocrError);
-       }
-    }
+    // Extract brand name - DISABLED
+    const brandName = ''; 
 
     // Extract courier company (usually at the top, right side)
     let courierCompany = extractCourierCompany(text);
@@ -101,25 +76,79 @@ async function extractLabelMetadata(filePath) {
     }
 
     // Extract product name (usually in product details section)
-    const products = extractProducts(text); // extractProducts returns array
+    let products = extractProducts(text); // extractProducts returns array
+
+    // AMAZON SPECIFIC OVERRIDE
+    // If it's Amazon Shipping, prefer the advanced pixel-projection OCR immediately
+    // because text layer is often garbage or missing for product name.
+    if (courierCompany === 'Amazon Shipping') {
+        console.log('Amazon Shipping detected. Attempting Advanced Pixel-Projection OCR...');
+        try {
+            const advancedData = await extractLabelDataFromPdf(filePath);
+            if (advancedData.products && advancedData.products.length > 0) {
+                console.log('Advanced OCR Success (Primary):', advancedData.products.length, 'products found.');
+                // Prioritize this result over text extraction
+                products = advancedData.products;
+            } else {
+                console.log('Advanced OCR failed, falling back to text extraction results.');
+            }
+        } catch (e) {
+            console.error('Advanced OCR Primary check failed:', e);
+        }
+    }
+
+    // FALLBACK: If no products found via text parser, try Advanced Region-Based OCR
+    if (products.length === 0) {
+        console.log('Product extraction failed via text parser. Attempting Advanced Region OCR...');
+        try {
+            const advancedData = await extractLabelDataFromPdf(filePath);
+            
+            if (advancedData.products && advancedData.products.length > 0) {
+                console.log('Advanced OCR Success:', advancedData.products.length, 'products found.');
+                products = advancedData.products;
+                
+                // If courier was also unknown, update it
+                if ((!courierCompany || courierCompany === 'Unknown Courier') && advancedData.courier_name) {
+                    courierCompany = advancedData.courier_name;
+                }
+            } else {
+                 console.log('Advanced OCR also failed to find products.');
+            }
+        } catch (e) {
+            console.error('Advanced OCR fallback failed:', e);
+        }
+    }
+
     let productName = '';
-    
-    // Convert array to single string if needed, or pass array down?
-    // The upload router handles `products` array in metadata.
-    // We should attach it to the return object.
     
     // Fallback for single product name (legacy support)
     if (products.length > 0) {
       productName = products[0].product_name;
     } else {
       productName = extractProductName(text); // Legacy function
+      
+      // CRITICAL: Filter out known garbage patterns from legacy extraction
+      if (productName && /STVM|MSTA|MRJA|PTAF|amazon\s*shipping|M1B|F17|^pE[—\-_]*T?$/i.test(productName)) {
+        console.log('[Legacy Fallback] Garbage detected, clearing product name:', productName);
+        productName = '';  // Clear garbage
+      }
+      
+      // Also filter very short or garbage-like names
+      if (productName && (productName.length < 4 || /^[^a-zA-Z]*$/.test(productName))) {
+        console.log('[Legacy Fallback] Invalid product name, clearing:', productName);
+        productName = '';
+      }
     }
 
+    // Extract Order Number / AWB for duplicate validation
+    const orderNumber = extractOrderNumber(text, courierCompany);
+
     return {
-      brand_name: brandName || '',
+      brand_name: brandName,
       courier_company: courierCompany || '',
       product_name: productName || '',
-      products: products // Pass full products array
+      products: products, // Pass full products array
+      order_number: orderNumber || ''
     };
   } catch (error) {
     console.error('Error extracting PDF metadata:', error);
@@ -354,6 +383,9 @@ function extractCourierCompany(text) {
     { pattern: /ECOM\s*EXPRESS/i, name: 'Ecom Express' },
     { pattern: /XPRESS\s*BEES/i, name: 'Xpressbees' },
     { pattern: /XPRESSBEES/i, name: 'Xpressbees' },
+    { pattern: /XYXPRESSEBEES/i, name: 'Xpressbees' }, // OCR artifact
+    { pattern: /PRESSEBEES/i, name: 'Xpressbees' },
+    { pattern: />>XPRESS/i, name: 'Xpressbees' },
     { pattern: /SHIP\s*ROCKET/i, name: 'Shiprocket' },
     { pattern: /SHIPROCKET/i, name: 'Shiprocket' },
     { pattern: /PICKRR/i, name: 'Pickrr' },
@@ -482,10 +514,10 @@ function extractProductName(text) {
     }
   }
   
-  // Try 3: Look for just "Product Name" or "Item Name" anywhere
+  // Try 3: Look for just "Product Name" or "Item Name" or "Item description" anywhere
   if (headerIndex === -1) {
     for (let i = 0; i < lines.length; i++) {
-      if (lines[i].match(/^Product\s*Name$/i) || lines[i].match(/^Item\s*Name$/i)) {
+      if (lines[i].match(/(Product|Item)\s*(Name|description)/i)) {
         headerIndex = i;
         break;
       }
@@ -511,6 +543,7 @@ function extractProductName(text) {
       
       // Stop at totals
       if (line.match(/^(Total|Subtotal|Grand\s*Total|Discount)/i)) break;
+      if (line.match(/^pE[\s\-–—T]+|pE\s*\d+/i)) continue; // Skip garbage
       if (line.length < 2) continue;
       
       // Check if entire line is a SKU pattern - skip it
@@ -613,6 +646,72 @@ function extractProductName(text) {
 }
 
 /**
+ * Parses the "# | Item description" table for Amazon labels.
+ * User-provided robust logic.
+ */
+function extractAmazonProducts(text) {
+  const products = [];
+  
+  // USER'S APPROACH: Look for "Item description" block
+  const itemBlock = text.match(/Item\s*description([\s\S]*?)(\n\n|$)/i);
+  
+  if (itemBlock) {
+    const lines = itemBlock[1].split('\n').map(l => l.trim()).filter(Boolean);
+    
+    for (const line of lines) {
+      // Skip header/noise lines
+      if (line.match(/^#|qty|^\d+$/i)) continue;
+      if (line.length < 4) continue;
+      
+      // Skip footer patterns and garbage
+      if (/STVM|MSTA|MRJA|PTAF|amazon\s*shipping|^pE[—\-_]*T?$/i.test(line)) continue;
+      
+      // Extract product name (strip leading number and QTY suffix)
+      let name = line.replace(/^\d+\s+/, '').trim();
+      name = name.replace(/\s*QTY\s*[-–—:]\s*\d+.*$/i, '').trim();
+      
+      if (name && name.length > 3) {
+        const qtyMatch = line.match(/QTY\s*[-–—:]\s*(\d+)/i);
+        const qty = qtyMatch ? parseInt(qtyMatch[1]) : 1;
+        products.push({ product_name: name, quantity: qty, price: 0 });
+      }
+    }
+  }
+  
+  // FALLBACK: If no products found via item block, try generic line detection
+  if (products.length === 0) {
+    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+    
+    for (const line of lines) {
+      // Skip common non-product patterns
+      if (line.match(/awb|invoice|date|ship|gst|cod|order|address|from|to|pin|sector|zone|^\d+$/i)) continue;
+      if (/STVM|MSTA|MRJA|PTAF|amazon|shipping/i.test(line)) continue;
+      if (line.length < 6 || line.length > 100) continue;
+      
+      // Check for QTY pattern - strong indicator of product line
+      const qtyMatch = line.match(/(.+?)\s*QTY\s*[-–—:]\s*(\d+)/i);
+      if (qtyMatch) {
+        let name = qtyMatch[1].replace(/^\d+\s+/, '').trim();
+        if (name && name.length > 3) {
+          products.push({ product_name: name, quantity: parseInt(qtyMatch[2]), price: 0 });
+        }
+      }
+    }
+  }
+  
+  return products;
+}
+
+/**
+ * "Garden Manual Sprayer QTY – 1"  →  "Garden Manual Sprayer"
+ * Handles –  -  —  with or without spaces.
+ */
+function parseAmazonItemName(line) {
+  const cut = line.replace(/\s*QTY\s*[-–—]\s*\d+\s*$/i, '').trim();
+  return cut || line.trim();
+}
+
+/**
  * Extract MULTIPLE products from PDF text
  * Returns an array of product objects: [{product_name, quantity, price}, ...]
  * 
@@ -620,6 +719,15 @@ function extractProductName(text) {
  * Product names may span multiple lines until the qty/price pattern is found
  */
 function extractProducts(text) {
+  // Check if Amazon Label first (User requested priority)
+  if (
+    text.toUpperCase().includes('AMAZON SHIPPING') || 
+    (text.toUpperCase().includes('ITEM DESCRIPTION') && text.toUpperCase().includes('ORDERED FROM'))
+  ) {
+      const amazonProducts = extractAmazonProducts(text);
+      if (amazonProducts.length > 0) return amazonProducts;
+  }
+
   const lines = text.split('\n').map(line => line.trim()).filter(line => line.length > 0);
   const products = [];
   
@@ -637,27 +745,61 @@ function extractProducts(text) {
         
         // Stop if we hit footer markers
         if (line.match(/STVM|MSTA|MRJA|PTAF|amazon/)) break;
-        if (line.startsWith('____')) break;
+        // Use inclusive match without anchors to catch footer text anywhere
+        if (line.match(/STVM|MSTA|MRJA|PTAF|amazon\s*shipping/i)) break;
+        // Don't break on separator lines, just skip them
+        if (line.match(/^_{3,}/)) continue;
 
         // Pattern: Number + Name + QTY-Number
         // e.g. "1 Garden Manual Sprayer QTY-1"
         // Flexible regex for OCR errors and formats:
-        // 1. "1 Garden Manual Sprayer QTY-1"
-        // 2. "1 Garden Manual Sprayer QTY - 1"
-        // 3. "1 Garden Manual Sprayer" and "QTY" is part of the name due to OCR?
-        
-        // Regex to capture: Start (digits/chars), Product Name, QTY-Value
-        // We match up to "QTY" or "OTY" etc, allowing spaces and dashes before the value
-        const amazonMatch = line.match(/^[\d|Il]+\s+(.+?)\s+(?:QTY|OTY|QTV)[\s:-]*(\d+)$/i) || 
-                            line.match(/^[\d|Il]+\s+(.+?)\s+QTY[\s-]*(\d+)$/i);
+        // REMOVED $ anchor at end to handle cases where footer text merges onto same line
+        // e.g. "1 Garden Manual Sprayer QTY-1 |MSTA..."
+        const amazonMatch = line.match(/^(?:[\d|Il\s\-–\.#]+)?(.+?)\s*(?:QTY|OTY|QTV)[\s:\-–]*(\d+)/i);
                             
         if (amazonMatch) {
+           let pName = amazonMatch[1].trim();
+           // Clean up leading pipe/hash if captured
+           pName = pName.replace(/^[|#]\s*/, '');
+           
            products.push({
-             product_name: amazonMatch[1].trim(),
+             product_name: pName,
              quantity: parseInt(amazonMatch[2]),
              price: 0 
            });
            continue;
+        }
+
+        // Fallback checks
+        const fallbackMatch = line.match(/^(?:[\d|Il\s\|\-–\.#]+)?(.+)$/);
+        if (fallbackMatch) {
+             let candidateName = fallbackMatch[1].trim();
+             
+             // Check if we missed the QTY split
+             const qtySplit = candidateName.match(/(.+?)\s*(?:QTY|OTY|QTV)/i);
+             if (qtySplit) {
+                 candidateName = qtySplit[1].trim();
+             }
+
+             // Cleanup leading pipe/hash
+             candidateName = candidateName.replace(/^[|#]\s*/, '');
+
+             // Strict validation against footer keywords
+             if (candidateName.match(/STVM|MSTA|MRJA|PTAF|amazon/i)) break;
+             
+             if (candidateName.match(/^Item\s*description/i)) continue;
+             if (candidateName.match(/^(Total|Subtotal|Page)/i)) break;
+             if (candidateName.match(/^[\d|Il]+$/)) continue;
+             if (candidateName.match(/^pE[\s\-–—T]+|pE\s*\d+/i)) continue;
+
+             if (candidateName.length > 3 && !candidateName.includes('__')) {
+                 products.push({
+                     product_name: candidateName,
+                     quantity: 1,
+                     price: 0
+                 });
+                 continue;
+             }
         }
       }
       if (products.length > 0) return products;
@@ -889,10 +1031,78 @@ function filterOutSku(text) {
   return filteredWords.join(' ').trim();
 }
 
+
+/**
+ * Extract Order Number or AWB from PDF text
+ * Used for duplicate detection
+ * 
+ * PRIORITY: AWB/Barcode (more universal) > Order ID
+ */
+function extractOrderNumber(text, courierName) {
+  const lines = text.split('\n').map(l => l.trim());
+  
+  // 1. EKART / ShoppersKart: Look for "IOIC" pattern (commonly under barcode)
+  const ekartMatch = text.match(/\b(IOIC\d{9,})\b/);
+  if (ekartMatch) return ekartMatch[1];
+
+  // 2. Courier specific patterns (AWB preferred)
+  
+  // Amazon: "AWB 123456789"
+  // Note: Amazon Order IDs (3-7-7 format) are also very distinct and reliable unique keys. 
+  // We check AWB first as requested, but if missing, Order ID is essentially the "AWB" for Amazon ecosystem.
+  if (courierName === 'Amazon Shipping' || text.match(/Amazon\s*Shipping/i)) {
+      const awbMatch = text.match(/AWB\s*([0-9]{10,})/i);
+      if (awbMatch) return awbMatch[1];
+  }
+
+  // Delhivery: Look for AWB (13-14 digits starting with 2, 3, etc)
+  if (courierName === 'Delhivery') {
+      const awbMatch = text.match(/(?:AWB|Tracking\s*ID)[\s:]*([0-9]{12,})/i);
+      if (awbMatch) return awbMatch[1];
+      
+      const matches = text.match(/\b(2[0-9]{11,})\b/g); // Common Delhivery AWB start
+      if (matches && matches.length > 0) return matches[0];
+  }
+
+  // 3. General AWB / Tracking ID labels
+  const trackingMatch = text.match(/(?:AWB|Tracking\s*ID|Waybill)[\s#:]*([A-Z0-9]{8,})/i);
+  if (trackingMatch) return trackingMatch[1];
+
+  // 4. Standalone Barcode-like Numbers (12+ digits)
+  // This is the "Universal" fallback for "number under barcode"
+  const potentialBarcodes = text.match(/\b\d{12,20}\b/g);
+  if (potentialBarcodes) {
+    for (const code of potentialBarcodes) {
+      if (!code.startsWith('91') && !code.startsWith('0')) { // Filter out likely phone numbers
+         return code;
+      }
+    }
+  }
+
+  // 5. Fallback: "Order ID" / "Order No"
+  // Only use if no AWB/Barcode found
+  for (const line of lines) {
+    const orderIdMatch = line.match(/(?:Order\s*ID|Order\s*No\.?|Order\s*#)[\s:]*([A-Z0-9\-_]{5,})/i);
+    if (orderIdMatch) {
+       if (!orderIdMatch[1].match(/^(SKU|QTY|DATE|INVOICE)$/i)) {
+         return orderIdMatch[1];
+       }
+    }
+    
+    if (line.match(/Ref\/?Invoice/i)) {
+       const refMatch = line.match(/Ref\/?Invoice[\s:]*([A-Z0-9\-_]+)/i);
+       if (refMatch) return refMatch[1];
+    }
+  }
+
+  return '';
+}
+
 module.exports = {
   extractLabelMetadata,
   extractBrandName,
   extractCourierCompany,
   extractProductName,
   extractProducts,
+  extractOrderNumber // Exported
 };

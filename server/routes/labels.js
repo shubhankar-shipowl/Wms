@@ -35,13 +35,9 @@ const upload = multer({
   }
 });
 
-/**
- * GET /hierarchy
- * Returns nested structure: Store -> Courier -> Products
- */
 router.get('/hierarchy', authenticateToken, async (req, res) => {
   try {
-    const { store, courier, product, search, startDate, endDate } = req.query;
+    const { courier, product, search, startDate, endDate } = req.query;
     
     let query = `
       SELECT id, store_name, courier_name, product_name, order_number, label_date, 
@@ -51,10 +47,6 @@ router.get('/hierarchy', authenticateToken, async (req, res) => {
     `;
     const params = [];
 
-    if (store) {
-      query += ` AND store_name = ?`;
-      params.push(store);
-    }
     if (courier) {
       query += ` AND courier_name = ?`;
       params.push(courier);
@@ -72,38 +64,25 @@ router.get('/hierarchy', authenticateToken, async (req, res) => {
       params.push(startDate, endDate);
     }
 
-    query += ` ORDER BY store_name, courier_name, product_name`;
+    query += ` ORDER BY courier_name, product_name`;
 
     const [rows] = await pool.execute(query, params);
 
-    // Transform flat list into hierarchy
-    const hierarchy = [];
-    const storesMap = new Map();
+    // Transform flat list into hierarchy (Courier -> Products)
+    const couriersMap = new Map();
+    const couriers = [];
 
     rows.forEach(row => {
-      // Store Level
-      if (!storesMap.has(row.store_name)) {
-        storesMap.set(row.store_name, {
-          store_name: row.store_name,
-          total_products: 0,
-          couriers: [],
-          couriersMap: new Map() // temporary helper
-        });
-        hierarchy.push(storesMap.get(row.store_name));
-      }
-      const storeObj = storesMap.get(row.store_name);
-      storeObj.total_products++;
-
       // Courier Level
-      if (!storeObj.couriersMap.has(row.courier_name)) {
-        storeObj.couriersMap.set(row.courier_name, {
+      if (!couriersMap.has(row.courier_name)) {
+        couriersMap.set(row.courier_name, {
           courier_name: row.courier_name,
           products_count: 0,
           products: []
         });
-        storeObj.couriers.push(storeObj.couriersMap.get(row.courier_name));
+        couriers.push(couriersMap.get(row.courier_name));
       }
-      const courierObj = storeObj.couriersMap.get(row.courier_name);
+      const courierObj = couriersMap.get(row.courier_name);
       courierObj.products_count++;
 
       // Product Level
@@ -113,16 +92,12 @@ router.get('/hierarchy', authenticateToken, async (req, res) => {
         order_number: row.order_number,
         date: row.label_date || row.upload_date,
         pdf_url: row.pdf_file_url,
-        filename: row.pdf_filename
+        filename: row.pdf_filename,
+        store_name: row.store_name // Keep store_name in product details just in case, but not as grouping
       });
     });
 
-    // Cleanup Maps
-    hierarchy.forEach(store => {
-      delete store.couriersMap;
-    });
-
-    res.json({ success: true, stores: hierarchy });
+    res.json({ success: true, couriers: couriers });
 
   } catch (error) {
     console.error('Error fetching hierarchy:', error);
@@ -135,10 +110,6 @@ router.get('/hierarchy', authenticateToken, async (req, res) => {
  */
 router.get('/stats', authenticateToken, async (req, res) => {
   try {
-    const [storeStats] = await pool.execute(`
-      SELECT store_name, COUNT(DISTINCT label_id) as count FROM labels GROUP BY store_name ORDER BY count DESC LIMIT 5
-    `);
-    
     const [courierStats] = await pool.execute(`
       SELECT courier_name, COUNT(DISTINCT label_id) as count FROM labels GROUP BY courier_name ORDER BY count DESC LIMIT 5
     `);
@@ -149,7 +120,6 @@ router.get('/stats', authenticateToken, async (req, res) => {
 
     const [totalStats] = await pool.execute(`
       SELECT 
-        COUNT(DISTINCT store_name) as total_stores,
         COUNT(DISTINCT courier_name) as total_couriers,
         COUNT(DISTINCT label_id) as total_labels
       FROM labels
@@ -158,10 +128,8 @@ router.get('/stats', authenticateToken, async (req, res) => {
     res.json({
       success: true,
       data: {
-        total_stores: totalStats[0].total_stores,
         total_couriers: totalStats[0].total_couriers,
         total_products: totalStats[0].total_labels,
-        stores_breakdown: storeStats,
         couriers_breakdown: courierStats,
         products_breakdown: productStats
       }
@@ -175,11 +143,11 @@ router.get('/stats', authenticateToken, async (req, res) => {
 
 /**
  * GET /products
- * Returns products filtered by store and courier with counts
+ * Returns products filtered by courier with counts
  */
 router.get('/products', authenticateToken, async (req, res) => {
   try {
-    const { store, courier } = req.query;
+    const { courier } = req.query;
     
     let query = `
       SELECT product_name, COUNT(*) as count 
@@ -188,10 +156,6 @@ router.get('/products', authenticateToken, async (req, res) => {
     `;
     const params = [];
 
-    if (store) {
-      query += ` AND store_name = ?`;
-      params.push(store);
-    }
     if (courier) {
       query += ` AND courier_name = ?`;
       params.push(courier);
@@ -214,23 +178,16 @@ router.get('/products', authenticateToken, async (req, res) => {
 
 /**
  * GET /couriers
- * Returns couriers filtered by store with counts
+ * Returns couriers with counts
  */
 router.get('/couriers', authenticateToken, async (req, res) => {
   try {
-    const { store } = req.query;
-    
     let query = `
       SELECT courier_name, COUNT(*) as count 
       FROM labels 
       WHERE 1=1
     `;
     const params = [];
-
-    if (store) {
-      query += ` AND store_name = ?`;
-      params.push(store);
-    }
 
     query += ` GROUP BY courier_name ORDER BY count DESC LIMIT 20`;
 
@@ -286,6 +243,26 @@ router.post('/upload', authenticateToken, upload.array('files', 50), async (req,
 
           // Generate unique label_id for this label (shared across all products on same label)
           const labelId = `LABEL-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
+          
+          const orderNumber = page.metadata.order_number || null;
+
+          // DUPLICATE CHECK
+          // Query DB to see if this order number + courier already exists
+          if (orderNumber) {
+            const [existing] = await pool.execute(
+              'SELECT id FROM labels WHERE order_number = ? AND courier_name = ? LIMIT 1',
+              [orderNumber, courier_name]
+            );
+            
+            if (existing.length > 0) {
+              // Mark as failed/duplicate
+              failed.push({ 
+                file: page.filename || file.originalname, 
+                error: `Duplicate Label: Order/AWB ${orderNumber} already exists.` 
+              });
+              continue; // Skip insertion
+            }
+          }
 
           // Determine products to insert
           const productsToInsert = products.length > 0 
@@ -298,8 +275,8 @@ router.post('/upload', authenticateToken, upload.array('files', 50), async (req,
               `INSERT INTO labels (
                 label_id, store_name, courier_name, product_name, 
                 sku, quantity, price,
-                pdf_file_url, pdf_filename, created_by
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                pdf_file_url, pdf_filename, created_by, order_number
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [
                 labelId,
                 store_name, 
@@ -310,7 +287,8 @@ router.post('/upload', authenticateToken, upload.array('files', 50), async (req,
                 product.price || 0,
                 relativePath, 
                 page.filename, 
-                req.user.id
+                req.user.id,
+                orderNumber // Save extracted Order/AWB
               ]
             );
 
@@ -318,7 +296,7 @@ router.post('/upload', authenticateToken, upload.array('files', 50), async (req,
               id: result.insertId,
               filename: page.filename,
               label_id: labelId,
-              metadata: { store_name, courier_name, product_name: product.product_name }
+              metadata: { store_name, courier_name, product_name: product.product_name, order_number: orderNumber }
             });
           }
         }
@@ -326,6 +304,15 @@ router.post('/upload', authenticateToken, upload.array('files', 50), async (req,
       } catch (e) {
         console.error(`Error processing ${file.originalname}:`, e);
         failed.push({ file: file.originalname, error: e.message });
+      } finally {
+        // Clean up the original uploaded file to prevent directory clutter
+        if (file.path && fs.existsSync(file.path)) {
+            try {
+                fs.unlinkSync(file.path);
+            } catch (cleanupErr) {
+                console.error('Failed to cleanup uploaded file:', cleanupErr);
+            }
+        }
       }
     }
 
@@ -348,7 +335,7 @@ router.post('/upload', authenticateToken, upload.array('files', 50), async (req,
  */
 router.post('/download', authenticateToken, async (req, res) => {
   try {
-    const { store, courier, ids, merge, startDate, endDate } = req.body;
+    const { courier, ids, merge, startDate, endDate } = req.body;
     
     // Construct query
     let query = 'SELECT * FROM labels WHERE 1=1';
@@ -358,7 +345,6 @@ router.post('/download', authenticateToken, async (req, res) => {
       query += ` AND id IN (${ids.map(() => '?').join(',')})`;
       ids.forEach(id => params.push(id));
     } else {
-      if (store) { query += ' AND store_name = ?'; params.push(store); }
       if (courier) { query += ' AND courier_name = ?'; params.push(courier); }
       
       if (startDate && endDate) {
@@ -384,13 +370,9 @@ router.post('/download', authenticateToken, async (req, res) => {
       if (courier) {
         // If downloading for a specific courier, group by Courier/Filename
         internalName = `${l.courier_name}/${l.pdf_filename}`;
-      } else if (store) {
-        // If downloading for a specific store, group by Store/Courier/Filename (or just Store/Filename?)
-        // Let's keep hierarchy if just store is selected to separate couriers
-        internalName = `${l.store_name}/${l.courier_name}/${l.pdf_filename}`;
       } else {
-        // Default: Store/Courier/Filename
-        internalName = `${l.store_name}/${l.courier_name}/${l.pdf_filename}`;
+        // Default: Courier/Filename
+        internalName = `${l.courier_name}/${l.pdf_filename}`;
       }
       return {
         path: path.join(__dirname, '../../', l.pdf_file_url),
@@ -419,12 +401,10 @@ router.post('/download', authenticateToken, async (req, res) => {
       
       const mergedBytes = await mergedPdf.save();
       
-      // Generate filename with store and courier names
-      const uniqueStores = [...new Set(labels.map(l => l.store_name))];
+      // Generate filename
       const uniqueCouriers = [...new Set(labels.map(l => l.courier_name))];
-      const storePrefix = uniqueStores.length === 1 ? uniqueStores[0] : 'Multiple';
       const courierPrefix = uniqueCouriers.length === 1 ? uniqueCouriers[0] : 'Multiple';
-      const mergedFilename = `${storePrefix}_${courierPrefix}_merged-labels.pdf`.replace(/\s+/g, '-');
+      const mergedFilename = `${courierPrefix}_merged-labels.pdf`.replace(/\s+/g, '-');
       
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="${mergedFilename}"`);
@@ -434,12 +414,10 @@ router.post('/download', authenticateToken, async (req, res) => {
     // Default: Zip archive
     const archive = archiver('zip', { zlib: { level: 9 } });
     
-    // Generate filename with store and courier names
-    const uniqueStores = [...new Set(labels.map(l => l.store_name))];
+    // Generate filename
     const uniqueCouriers = [...new Set(labels.map(l => l.courier_name))];
-    const storePrefix = uniqueStores.length === 1 ? uniqueStores[0] : 'Multiple';
     const courierPrefix = uniqueCouriers.length === 1 ? uniqueCouriers[0] : 'Multiple';
-    const zipFilename = `${storePrefix}_${courierPrefix}_labels.zip`.replace(/\s+/g, '-');
+    const zipFilename = `${courierPrefix}_labels.zip`.replace(/\s+/g, '-');
     
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="${zipFilename}"`);
@@ -465,8 +443,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
   try {
     const [rows] = await pool.execute('SELECT pdf_file_url FROM labels WHERE id = ?', [req.params.id]);
     if (rows.length > 0) {
-      const p = path.join(__dirname, '../../', rows[0].pdf_file_url);
-      if (fs.existsSync(p)) fs.unlinkSync(p);
+      deleteFileFromDisk(rows[0].pdf_file_url);
     }
     
     await pool.execute('DELETE FROM labels WHERE id = ?', [req.params.id]);
@@ -510,14 +487,8 @@ router.delete('/', authenticateToken, async (req, res) => {
     // 2. Delete files from disk
     let deletedCount = 0;
     for (const row of rows) {
-      const p = path.join(__dirname, '../../', row.pdf_file_url);
-      if (fs.existsSync(p)) {
-        try {
-          fs.unlinkSync(p);
+      if (deleteFileFromDisk(row.pdf_file_url)) {
           deletedCount++;
-        } catch (e) {
-          console.error('Failed to delete file:', p, e);
-        }
       }
     }
 
@@ -534,5 +505,39 @@ router.delete('/', authenticateToken, async (req, res) => {
     res.status(500).json({ success: false, message: 'Bulk deletion failed' });
   }
 });
+
+/**
+ * Helper to delete file from multiple potential locations
+ */
+function deleteFileFromDisk(relativePath) {
+  if (!relativePath) return false;
+
+  let deleted = false;
+  
+  const pathsToTry = [
+    // 1. Project Root (Wms/uploads/...) - Best guess
+    path.join(__dirname, '../../', relativePath),
+    // 2. Server Root (Wms/server/uploads/...) - User request
+    path.join(__dirname, '../', relativePath),
+    // 3. CWD relative (Wms/uploads/...) - Fallback
+    path.join(process.cwd(), relativePath)
+  ];
+
+  // Dedup paths
+  const uniquePaths = [...new Set(pathsToTry)];
+
+  for (const p of uniquePaths) {
+    if (fs.existsSync(p)) {
+      try {
+        fs.unlinkSync(p);
+        console.log(`Deleted file: ${p}`);
+        deleted = true;
+      } catch (e) {
+        console.error(`Failed to delete file at ${p}:`, e);
+      }
+    }
+  }
+  return deleted;
+}
 
 module.exports = router;

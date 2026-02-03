@@ -33,7 +33,6 @@ import {
 
 function PickList() {
   const [filters, setFilters] = useState({
-    storeName: '',
     courierName: '',
     dateFrom: '',
     dateTo: ''
@@ -103,29 +102,7 @@ function PickList() {
       <Paper sx={{ p: 3, mb: 3 }}>
         <Typography variant="h6" gutterBottom>Filters</Typography>
         <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ mb: 2 }}>
-          <FormControl size="small" sx={{ minWidth: 200 }}>
-            <InputLabel shrink>Store</InputLabel>
-            <Select
-              value={filters.storeName}
-              label="Store"
-              onChange={(e) => setFilters({...filters, storeName: e.target.value})}
-              displayEmpty
-              notched
-              renderValue={(selected) => {
-                if (selected === '') {
-                  return 'All Stores';
-                }
-                return selected;
-              }}
-            >
-              <MenuItem value="">All Stores</MenuItem>
-              {filterOptions?.data?.stores_breakdown?.map(store => (
-                <MenuItem key={store.store_name} value={store.store_name}>
-                  {store.store_name}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
+
 
           <FormControl size="small" sx={{ minWidth: 200 }}>
             <InputLabel shrink>Courier</InputLabel>

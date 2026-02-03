@@ -15,7 +15,6 @@ import LoadingSpinner from '../components/Common/LoadingSpinner';
 
 const Labels = () => {
   const [tab, setTab] = useState(0); // 0: Browse, 1: Upload
-  const [storeFilter, setStoreFilter] = useState('');
   const [courierFilter, setCourierFilter] = useState('');
   const [productFilter, setProductFilter] = useState('');
   const [startDate, setStartDate] = useState('');
@@ -27,25 +26,20 @@ const Labels = () => {
     () => axios.get('/api/labels/stats').then(res => res.data)
   );
 
-  // Fetch Couriers based on selected store
+  // Fetch Couriers
   const { data: couriersData } = useQuery(
-    ['labels-couriers', storeFilter],
-    () => axios.get('/api/labels/couriers', {
-      params: {
-        store: storeFilter || undefined
-      }
-    }).then(res => res.data),
+    ['labels-couriers'],
+    () => axios.get('/api/labels/couriers').then(res => res.data),
     {
       keepPreviousData: true
     }
   );
 
-  // Fetch Products based on selected store and courier
+  // Fetch Products based on selected courier
   const { data: productsData } = useQuery(
-    ['labels-products', storeFilter, courierFilter],
+    ['labels-products', courierFilter],
     () => axios.get('/api/labels/products', {
       params: {
-        store: storeFilter || undefined,
         courier: courierFilter || undefined
       }
     }).then(res => res.data),
@@ -53,13 +47,6 @@ const Labels = () => {
       keepPreviousData: true
     }
   );
-
-  // Reset courier and product filter when store changes
-  const handleStoreChange = (value) => {
-    setStoreFilter(value);
-    setCourierFilter(''); // Reset courier when store changes
-    setProductFilter(''); // Reset product when store changes
-  };
 
   const handleCourierChange = (value) => {
     setCourierFilter(value);
@@ -73,7 +60,7 @@ const Labels = () => {
     isFetching,
     refetch: refetchHierarchy 
   } = useQuery(
-    ['labels-hierarchy', storeFilter, courierFilter, productFilter],
+    ['labels-hierarchy', courierFilter, productFilter],
     () => {
       const endDateTime = endDate ? new Date(endDate) : undefined;
       if (endDateTime) {
@@ -82,7 +69,6 @@ const Labels = () => {
       
       return axios.get('/api/labels/hierarchy', {
         params: {
-          store: storeFilter,
           courier: courierFilter,
           product: productFilter,
           startDate: startDate ? new Date(startDate).toISOString() : undefined,
@@ -139,11 +125,10 @@ const Labels = () => {
     }
   };
 
-  const handleDownload = async (type, value, storeName, startParam, endParam) => {
+  const handleDownload = async (type, value, startParam, endParam) => {
     try {
       const response = await axios.post('/api/labels/download', {
         [type]: value,
-        ...(type === 'courier' && storeName ? { store: storeName } : {}),
         startDate: startParam,
         endDate: endParam
       }, {
@@ -152,9 +137,7 @@ const Labels = () => {
       
       // Generate filename based on type
       let filename = 'labels.zip';
-      if (type === 'courier' && storeName) {
-        filename = `${storeName}-${value}.zip`;
-      } else if (type === 'store') {
+      if (type === 'courier') {
         filename = `${value}.zip`;
       }
       
@@ -210,30 +193,6 @@ const Labels = () => {
               <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems="center">
                 
                 <FormControl size="small" sx={{ minWidth: 200 }}>
-                  <InputLabel shrink>Store</InputLabel>
-                  <Select
-                    value={storeFilter}
-                    label="Store"
-                    onChange={(e) => handleStoreChange(e.target.value)}
-                    displayEmpty
-                    notched
-                    renderValue={(selected) => {
-                      if (selected === '') {
-                        return 'All Stores';
-                      }
-                      return selected;
-                    }}
-                  >
-                    <MenuItem value="">All Stores</MenuItem>
-                    {statsData?.data?.stores_breakdown?.map(store => (
-                       <MenuItem key={store.store_name} value={store.store_name}>
-                         {store.store_name}
-                       </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-
-                <FormControl size="small" sx={{ minWidth: 200 }}>
                   <InputLabel shrink>Courier</InputLabel>
                   <Select
                     value={courierFilter}
@@ -282,13 +241,12 @@ const Labels = () => {
                   </Select>
                 </FormControl>
 
-                {(storeFilter || courierFilter || productFilter) && (
+                {(courierFilter || productFilter) && (
                   <Button
                     variant="outlined"
                     size="small"
                     startIcon={<Clear />}
                     onClick={() => {
-                      setStoreFilter('');
                       setCourierFilter('');
                       setProductFilter('');
                     }}
@@ -362,9 +320,9 @@ const Labels = () => {
                                          if (end) {
                                              const e = new Date(end);
                                              e.setHours(23, 59, 59, 999);
-                                             handleDownload('courier', courier.courier_name, null, start, e.toISOString());
+                                             handleDownload('courier', courier.courier_name, start, e.toISOString());
                                          } else {
-                                             handleDownload('courier', courier.courier_name, null, start, undefined); 
+                                             handleDownload('courier', courier.courier_name, start, undefined); 
                                          }
                                     }}
                                 >
@@ -388,7 +346,7 @@ const Labels = () => {
             <LoadingSpinner /> 
           ) : (
             <LabelsHierarchy 
-              data={hierarchyData?.stores} 
+              couriers={hierarchyData?.couriers} 
               onView={() => {}}
               onDownload={handleDownload}
               onDelete={handleDelete}

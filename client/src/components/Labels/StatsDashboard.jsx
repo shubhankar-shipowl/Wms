@@ -32,14 +32,7 @@ const StatsDashboard = ({ stats }) => {
   return (
     <Box sx={{ mb: 4 }}>
       <Grid container spacing={3}>
-        <Grid item xs={12} md={4}>
-          <StatCard
-            title="Total Stores"
-            value={stats.total_stores || 0}
-            icon={<Store />}
-            color="primary"
-          />
-        </Grid>
+
         <Grid item xs={12} md={4}>
           <StatCard
             title="Total Couriers"

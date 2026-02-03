@@ -9,7 +9,7 @@ const ExcelJS = require('exceljs');
  */
 router.post('/generate', async (req, res) => {
   try {
-    const { storeName, courierName, dateFrom, dateTo } = req.body;
+    const { courierName, dateFrom, dateTo } = req.body;
     
     // Build query with filters
     let query = `
@@ -22,11 +22,6 @@ router.post('/generate', async (req, res) => {
     `;
     
     const params = [];
-    
-    if (storeName) {
-      query += ` AND store_name = ?`;
-      params.push(storeName);
-    }
     
     if (courierName) {
       query += ` AND courier_name = ?`;
@@ -87,7 +82,7 @@ router.post('/generate', async (req, res) => {
  */
 router.post('/download', async (req, res) => {
   try {
-    const { storeName, courierName, dateFrom, dateTo } = req.body;
+    const { courierName, dateFrom, dateTo } = req.body;
     
     // Build query to get all products with courier quantities
     let query = `
@@ -100,11 +95,6 @@ router.post('/download', async (req, res) => {
     `;
     
     const params = [];
-    
-    if (storeName) {
-      query += ` AND store_name = ?`;
-      params.push(storeName);
-    }
     
     if (courierName) {
       query += ` AND courier_name = ?`;
@@ -127,9 +117,20 @@ router.post('/download', async (req, res) => {
     
     const [results] = await pool.execute(query, params);
     
-    // Get unique couriers and products
+    // Get unique couriers
     const couriers = [...new Set(results.map(r => r.courier_name))].sort();
-    const products = [...new Set(results.map(r => r.product_name))].sort();
+    
+    // Calculate total quantity per product for sorting
+    const productTotals = {};
+    results.forEach(row => {
+      const qty = Number(row.quantity);
+      productTotals[row.product_name] = (productTotals[row.product_name] || 0) + qty;
+    });
+
+    // Get products sorted by Grand Total (Low to High)
+    const products = Object.keys(productTotals).sort((a, b) => {
+      return productTotals[a] - productTotals[b];
+    });
     
     // Build pivot table data structure
     // Map: product_name -> { courier_name: quantity }

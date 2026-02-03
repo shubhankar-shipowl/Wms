@@ -75,6 +75,24 @@ async function updateSchema() {
       console.log("images column already exists");
     }
 
+    // Check if order_number column exists in labels table
+    const [checkOrderNumber] = await pool.execute(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'labels' AND column_name = 'order_number'
+    `);
+
+    if (checkOrderNumber.length === 0) {
+      console.log("Adding order_number column to labels table...");
+      await pool.execute("ALTER TABLE labels ADD COLUMN order_number VARCHAR(100) DEFAULT NULL");
+      // Add index for faster lookup (check if exists first in a real prod env, but here simpler)
+      // MySQL allows ADD INDEX in ALTER TABLE usually
+      await pool.execute("ALTER TABLE labels ADD INDEX idx_order_number (order_number)");
+      console.log("order_number column added successfully");
+    } else {
+      console.log("order_number column already exists");
+    }
+
     console.log("Database schema update completed successfully");
   } catch (error) {
     console.error("Error updating database schema:", error);
