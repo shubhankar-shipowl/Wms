@@ -272,7 +272,87 @@ async function extractCourierFromImage(pdfPath) {
 }
 
 async function extractStoreFromImage(pdfPath) {
-    return null;
+    // OCR the top 15% of the label where brand logos typically appear
+    const tempDir = '/tmp/ocr-store-' + Date.now();
+    fs.mkdirSync(tempDir, { recursive: true });
+    let workerAcquired = false;
+
+    // Common address/locality words that should NEVER be a brand name
+    const addressWords = new Set([
+        'station', 'railway', 'masjid', 'nagar', 'road', 'street', 'lane', 'colony', 'building',
+        'apartment', 'flat', 'house', 'floor', 'block', 'sector', 'plot', 'near',
+        'opposite', 'behind', 'village', 'town', 'city', 'district', 'tehsil',
+        'chowk', 'bazaar', 'market', 'gali', 'mohalla', 'ward', 'post', 'office',
+        'temple', 'church', 'mosque', 'school', 'college', 'hospital', 'park',
+        'garden', 'tower', 'complex', 'enclave', 'vihar', 'puram', 'abad',
+        'centre', 'center', 'tiffin', 'resort', 'stop', 'bus', 'ghat',
+        'address', 'shipping', 'deliver', 'invoice', 'order', 'product', 'price',
+        'total', 'weight', 'dimensions', 'please', 'reach', 'complaints',
+        'great', 'placed', 'barcode', 'sunti', 'kumar', 'singh', 'sharma',
+        'nath', 'das', 'devi', 'ram', 'lal', 'prasad', 'lakshmi', 'gour',
+        'mali', 'karan', 'charan'
+    ]);
+
+    try {
+        const outputPrefix = path.join(tempDir, 'page');
+        execSync(`pdftocairo -png -f 1 -l 1 -scale-to 2000 "${pdfPath}" "${outputPrefix}"`, { stdio: 'pipe' });
+
+        const files = fs.readdirSync(tempDir);
+        const pngFile = files.find(f => f.endsWith('.png'));
+        if (!pngFile) return null;
+
+        const imagePath = path.join(tempDir, pngFile);
+        const metadata = await sharp(imagePath).metadata();
+
+        // Crop top 15% of the image only (logo area - tighter crop to avoid address text)
+        const cropHeight = Math.floor(metadata.height * 0.15);
+        const buffer = await sharp(imagePath)
+            .extract({ left: 0, top: 0, width: metadata.width, height: cropHeight })
+            .toBuffer();
+
+        const worker = await getSharedWorker();
+        workerAcquired = true;
+        const { data } = await worker.recognize(buffer);
+        const ocrText = data.text || '';
+
+        if (!ocrText.trim()) return null;
+
+        console.log('Store OCR raw text:', ocrText.substring(0, 200));
+
+        // Clean OCR lines and look for brand name
+        const lines = ocrText.split('\n').map(l => l.trim()).filter(l => l.length >= 2);
+
+        // Skip known non-brand text
+        const skipPatterns = [
+            /^\d{5,}/, /shipping\s*address/i, /^pin/i, /^cod$/i, /^to:/i,
+            /^\d{2}\/\d{2}\/\d{4}/, /barcode/i, /^I\d+C\d+/, /^\d+\s/
+        ];
+
+        for (const line of lines) {
+            if (skipPatterns.some(p => p.test(line))) continue;
+            const cleaned = line.replace(/[^a-zA-Z\s&'-]/g, '').trim();
+            if (cleaned.length < 3 || cleaned.length > 30) continue;
+
+            // Check if ALL words are address/generic words - if so, skip
+            const words = cleaned.toLowerCase().split(/\s+/);
+            const isAddress = words.every(w => addressWords.has(w) || w.length <= 1);
+            if (isAddress) continue;
+
+            // At least one word should NOT be an address word (likely the brand)
+            const brandWords = words.filter(w => !addressWords.has(w) && w.length > 1);
+            if (brandWords.length === 0) continue;
+
+            return cleaned;
+        }
+
+        return null;
+    } catch (e) {
+        console.error('Store OCR failed:', e.message);
+        return null;
+    } finally {
+        if (workerAcquired) releaseSharedWorker();
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
 }
 
 async function extractTextFromRegion(pdfPath, region) {

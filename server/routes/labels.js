@@ -39,8 +39,8 @@ router.get('/hierarchy', authenticateToken, async (req, res) => {
     const { courier, product, search, startDate, endDate } = req.query;
     
     let query = `
-      SELECT id, store_name, courier_name, product_name, order_number, label_date, 
-             pdf_file_url, pdf_filename, upload_date
+      SELECT id, store_name, courier_name, product_name, order_number, customer_name,
+             label_date, pdf_file_url, pdf_filename, upload_date
       FROM labels
       WHERE 1=1
     `;
@@ -92,7 +92,8 @@ router.get('/hierarchy', authenticateToken, async (req, res) => {
         date: row.label_date || row.upload_date,
         pdf_url: row.pdf_file_url,
         filename: row.pdf_filename,
-        store_name: row.store_name // Keep store_name in product details just in case, but not as grouping
+        store_name: row.store_name,
+        customer_name: row.customer_name || ''
       });
     });
 
@@ -204,6 +205,39 @@ router.get('/couriers', authenticateToken, async (req, res) => {
 });
 
 /**
+ * GET /personalized-notes-data
+ * Returns unique customer names and store names for personalized note generation
+ */
+router.get('/personalized-notes-data', authenticateToken, async (req, res) => {
+  try {
+    // Return each unique customer+store pair (one note per label, not per product)
+    const [entries] = await pool.execute(`
+      SELECT customer_name, store_name, MAX(upload_date) as upload_date
+      FROM labels
+      WHERE customer_name IS NOT NULL AND customer_name != ''
+      GROUP BY customer_name, store_name
+      ORDER BY upload_date DESC
+    `);
+
+    const [stores] = await pool.execute(`
+      SELECT DISTINCT store_name
+      FROM labels
+      WHERE store_name IS NOT NULL AND store_name != '' AND store_name != 'Unknown Store'
+      ORDER BY store_name ASC
+    `);
+
+    res.json({
+      success: true,
+      entries: entries.map(r => ({ customer_name: r.customer_name, store_name: r.store_name })),
+      stores: stores.map(r => r.store_name)
+    });
+  } catch (error) {
+    console.error('Error fetching personalized notes data:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch data' });
+  }
+});
+
+/**
  * POST /upload
  */
 router.post('/upload', authenticateToken, upload.array('files', 50), async (req, res) => {
@@ -270,6 +304,7 @@ router.post('/upload', authenticateToken, upload.array('files', 50), async (req,
           const page = pages[i];
           const store_name = page.metadata.brand_name || page.metadata.store_name || 'Unknown Store';
           const courier_name = page.metadata.courier_company || page.metadata.courier_name || 'Unknown Courier';
+          const customer_name = page.metadata.customer_name || '';
           const products = page.metadata.products || [];
           const singleProductName = page.metadata.product_name || 'Unknown Product';
           const relativePath = path.relative(path.join(__dirname, '../../'), page.filePath);
@@ -292,7 +327,8 @@ router.post('/upload', authenticateToken, upload.array('files', 50), async (req,
               relativePath,
               filename: page.filename,
               userId: req.user.id,
-              orderNumber
+              orderNumber,
+              customer_name
             });
           }
         }
@@ -301,13 +337,13 @@ router.post('/upload', authenticateToken, upload.array('files', 50), async (req,
         const BATCH_SIZE = 50;
         for (let b = 0; b < insertRows.length; b += BATCH_SIZE) {
           const batch = insertRows.slice(b, b + BATCH_SIZE);
-          const placeholders = batch.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
+          const placeholders = batch.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
           const values = [];
           batch.forEach(row => {
             values.push(
               row.labelId, row.store_name, row.courier_name, row.product_name,
               row.sku, row.quantity, row.price,
-              row.relativePath, row.filename, row.userId, row.orderNumber
+              row.relativePath, row.filename, row.userId, row.orderNumber, row.customer_name
             );
           });
 
@@ -315,7 +351,7 @@ router.post('/upload', authenticateToken, upload.array('files', 50), async (req,
             `INSERT INTO labels (
               label_id, store_name, courier_name, product_name,
               sku, quantity, price,
-              pdf_file_url, pdf_filename, created_by, order_number
+              pdf_file_url, pdf_filename, created_by, order_number, customer_name
             ) VALUES ${placeholders}`,
             values
           );
@@ -327,7 +363,7 @@ router.post('/upload', authenticateToken, upload.array('files', 50), async (req,
               id: firstId + idx,
               filename: row.filename,
               label_id: row.labelId,
-              metadata: { store_name: row.store_name, courier_name: row.courier_name, product_name: row.product_name, order_number: row.orderNumber }
+              metadata: { store_name: row.store_name, courier_name: row.courier_name, product_name: row.product_name, order_number: row.orderNumber, customer_name: row.customer_name }
             });
           });
         }

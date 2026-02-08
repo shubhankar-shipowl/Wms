@@ -56,8 +56,40 @@ async function extractLabelMetadata(filePath) {
       console.error('Failed to write debug text', e);
     }
 
-    // Extract brand name - DISABLED
-    const brandName = ''; 
+    // Extract brand/store name - try multiple strategies in order of reliability
+    // 1. Amazon "Ordered From:" (most specific for Amazon labels)
+    let brandName = extractAmazonBrand(text);
+    // 2. Known brand keyword search across entire label text (most consistent display names)
+    if (!brandName) {
+      brandName = extractKnownBrand(text);
+    }
+    // 3. Email-based extraction (reliable for Flipkart/Ekart labels with support email)
+    if (!brandName) {
+      brandName = extractBrandFromEmail(text);
+    }
+    // 4. Invoice No prefix detection (e.g. "#SK" -> "SHOPPERS KART")
+    if (!brandName) {
+      brandName = extractBrandFromInvoice(text);
+    }
+    // 5. General brand extraction from first lines (Delhivery-style labels)
+    if (!brandName) {
+      brandName = extractBrandName(text);
+    }
+    // 6. OCR on top logo area (for labels with brand as image logo)
+    if (!brandName) {
+      try {
+        const ocrBrand = await extractStoreFromImage(filePath);
+        if (ocrBrand) {
+          console.log('OCR detected store/brand:', ocrBrand);
+          brandName = ocrBrand;
+        }
+      } catch (ocrErr) {
+        console.error('Brand OCR fallback failed:', ocrErr.message);
+      }
+    }
+
+    // Extract customer/recipient name from "Ship To" / "Deliver To" section
+    const customerName = extractCustomerName(text);
 
     // Extract courier company (usually at the top, right side)
     let courierCompany = extractCourierCompany(text);
@@ -148,7 +180,8 @@ async function extractLabelMetadata(filePath) {
       courier_company: courierCompany || '',
       product_name: productName || '',
       products: products, // Pass full products array
-      order_number: orderNumber || ''
+      order_number: orderNumber || '',
+      customer_name: customerName || ''
     };
   } catch (error) {
     console.error('Error extracting PDF metadata:', error);
@@ -156,7 +189,8 @@ async function extractLabelMetadata(filePath) {
       brand_name: '',
       courier_company: '',
       product_name: '',
-      products: []
+      products: [],
+      customer_name: ''
     };
   }
 }
@@ -182,14 +216,19 @@ function extractAmazonBrand(text) {
         // Clean up common OCR artifacts
         // "Shopperskart pi -" -> "Shopperskart"
         // "Shopperskart aa ~" -> "Shopperskart"
-        // Remove trailing " pi", " aa", " ~" etc
+        // "Shopperskart a I" -> "Shopperskart"
+        // Remove trailing single/double letter noise + any following chars
         candidate = candidate.replace(/\s+(pi|aa)\s*[-~]?.*$/i, '');
-        candidate = candidate.replace(/\s+[-~]\s*$/, '');
-        
+        candidate = candidate.replace(/\s+[a-zA-Z]{1,2}\s+[a-zA-Z]{1,2}\s*$/, ''); // " a I", " a i"
+        candidate = candidate.replace(/\s+[a-zA-Z]{1,2}\s*[-~=|]?\s*$/, ''); // trailing single letter + symbol
+        candidate = candidate.replace(/\s+[-~=|]\s*$/, '');
+
         // Remove trailing non-alphanumeric chars (except .)
         candidate = candidate.replace(/[^a-zA-Z0-9.]+$/, '');
-        
-        return candidate.trim();
+
+        if (candidate.trim().length >= 3) {
+          return candidate.trim();
+        }
       }
     }
   }
@@ -224,6 +263,53 @@ function extractBrandFromEmail(text) {
 }
 
 /**
+ * Search entire label text for known brand names/keywords.
+ * This catches brands mentioned anywhere (email footers, support text, etc.)
+ */
+function extractKnownBrand(text) {
+  const textLower = text.toLowerCase();
+
+  // Known brand keywords -> display name
+  const knownBrands = [
+    { keywords: ['shopperskart', 'shoppers kart', 'shoppers  kart'], name: 'SHOPPERS KART' },
+    { keywords: ['dazara'], name: 'DAZARA' },
+    { keywords: ['zen goods', 'zengoods'], name: 'ZEN GOODS' },
+    { keywords: ['liveonease', 'live on ease'], name: 'LiveOnEase' },
+  ];
+
+  for (const brand of knownBrands) {
+    for (const keyword of brand.keywords) {
+      if (textLower.includes(keyword)) {
+        console.log(`[Brand] Known brand found via keyword "${keyword}": ${brand.name}`);
+        return brand.name;
+      }
+    }
+  }
+  return '';
+}
+
+/**
+ * Extract brand name from Invoice Number prefix.
+ * e.g. Invoice No: #SK671079 -> "SHOPPERS KART" (SK prefix)
+ */
+function extractBrandFromInvoice(text) {
+  const invoiceMatch = text.match(/Invoice\s*No[:\s]*#?([A-Z]{2,4})\d+/i);
+  if (!invoiceMatch) return '';
+
+  const prefix = invoiceMatch[1].toUpperCase();
+
+  // Known invoice prefix -> brand mapping
+  const prefixMap = {
+    'SK': 'SHOPPERS KART',
+    'ZG': 'ZEN GOODS',
+    'DZ': 'DAZARA',
+    'LO': 'LiveOnEase',
+  };
+
+  return prefixMap[prefix] || '';
+}
+
+/**
  * Extract brand name from PDF text
  * Appears in the TOP LEFT box - appears on line 2 (after warehouse code on line 1)
  * Handles multi-line brand names like "SHOPPERS" on line 1 and "KART" on line 2
@@ -231,24 +317,64 @@ function extractBrandFromEmail(text) {
 function extractBrandName(text) {
   // Split text into lines
   const lines = text.split('\n').map(line => line.trim()).filter(line => line.length > 0);
-  
+
+  // Detect Ekart/Flipkart label format: first line is "PIN DATE" (e.g. "603209 01/02/2026")
+  // followed by "Shipping Address". These labels have brand as IMAGE logo, not in text.
+  // Text-based extraction here would only pick up address garbage, so skip entirely.
+  if (lines.length > 1 &&
+      lines[0].match(/^\d{6}\s+\d{2}\/\d{2}\/\d{4}/) &&
+      lines.some((l, i) => i < 3 && /Shipping\s*Address/i.test(l))) {
+    return '';
+  }
+
   const knownCouriers = [
     'delhivery', 'fedex', 'dhl', 'bluedart', 'blue dart', 'dtdc',
     'ecom express', 'ecom express', 'xpressbees', 'xpress bees',
     'shiprocket', 'ship rocket', 'pickrr', 'ekart', 'e kart',
     'india post', 'speed post', 'first flight', 'professional', 'gati', 'surface'
   ];
-  
+
+  // Indian states/UTs and common location words that should NOT be brand names
+  const knownLocations = [
+    'punjab', 'haryana', 'rajasthan', 'maharashtra', 'gujarat', 'bihar',
+    'karnataka', 'kerala', 'telangana', 'andhra pradesh', 'tamil nadu',
+    'uttar pradesh', 'madhya pradesh', 'west bengal', 'odisha', 'assam',
+    'jharkhand', 'chhattisgarh', 'uttarakhand', 'himachal pradesh', 'goa',
+    'tripura', 'meghalaya', 'manipur', 'nagaland', 'mizoram', 'arunachal pradesh',
+    'sikkim', 'delhi', 'chandigarh', 'jammu', 'kashmir', 'ladakh',
+    'mumbai', 'kolkata', 'chennai', 'bangalore', 'hyderabad', 'pune', 'jaipur',
+    'lucknow', 'ahmedabad', 'surat', 'indore', 'bhopal', 'patna', 'india'
+  ];
+
+  // Address/locality words that should never be a brand name
+  const addressWords = new Set([
+    'station', 'railway', 'masjid', 'nagar', 'road', 'street', 'lane', 'colony', 'building',
+    'apartment', 'flat', 'house', 'floor', 'block', 'sector', 'plot', 'near',
+    'opposite', 'behind', 'village', 'town', 'city', 'district', 'tehsil',
+    'chowk', 'bazaar', 'market', 'gali', 'mohalla', 'ward', 'post', 'office',
+    'temple', 'church', 'mosque', 'school', 'college', 'hospital', 'park',
+    'garden', 'tower', 'complex', 'enclave', 'vihar', 'puram', 'abad',
+    'centre', 'center', 'tiffin', 'resort', 'stop', 'bus', 'ghat',
+    'address', 'shipping', 'deliver', 'invoice', 'order', 'product', 'price',
+    'total', 'weight', 'dimensions', 'please', 'reach', 'complaints',
+    'great', 'placed', 'barcode', 'sunti', 'kumar', 'singh', 'sharma',
+    'nath', 'das', 'devi', 'ram', 'lal', 'prasad', 'lakshmi', 'gour',
+    'mali', 'karan', 'charan'
+  ]);
+
   // Helper function to check if a line is a potential brand name part
   const isBrandNamePart = (line) => {
     if (!line || line.length < 2) return false;
-    
+
+    // Skip Indian states/locations
+    if (knownLocations.includes(line.toLowerCase())) return false;
+
     // Skip warehouse codes in parentheses like "(BWR/RIA)", "(JAI/JAI)", etc.
     if (line.match(/^\([A-Z]{3}\/[A-Z]{3}\)$/)) return false;
-    
+
     // Skip barcodes (long numeric strings, usually 13+ digits)
     if (line.match(/^\d{13,}$/)) return false;
-    
+
     // Skip known non-brand keywords
     // Added 'TO', 'FROM' to explicitly skip
     if (line.match(/^(COD|PIN|SKU|QTY|DATE|ORDER|INVOICE|TOTAL|PRICE|RS|ADDRESS|DELIVER|TO\b|FROM\b|NUMBER|VALUE)$/i)) return false;
@@ -260,14 +386,20 @@ function extractBrandName(text) {
     if (knownCouriers.some(courier => lineLower === courier || lineLower.startsWith(courier + ' '))) {
       return false;
     }
-    
+
+    // Skip if ALL words are address/locality words (e.g. "Sunti Masjid", "Station Road")
+    const words = lineLower.split(/\s+/).filter(w => w.length > 1);
+    if (words.length > 0 && words.every(w => addressWords.has(w))) {
+      return false;
+    }
+
     // Brand name parts are typically:
     // - Uppercase letters (may have spaces)
     // - Length between 2-30 characters
     if (line.length >= 2 && line.length <= 30 && line.match(/^[A-Za-z\s&'-]+$/)) {
       return true;
     }
-    
+
     return false;
   };
   
@@ -364,6 +496,100 @@ function extractBrandName(text) {
   }
   
   return '';
+}
+
+/**
+ * Extract customer/recipient name from shipping label text.
+ * Looks for "Ship To:", "Deliver To:", "To:" sections and grabs the name line.
+ */
+function extractCustomerName(text) {
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+
+  // Patterns that indicate the next line(s) contain the recipient name
+  const shipToPatterns = [
+    /^(?:Ship\s*To|Deliver\s*To|Delivery\s*Address|Shipping\s*Address|Consignee)\s*:?\s*$/i,
+    /^To\s*:?\s*$/i,
+  ];
+
+  // Patterns where name is on the SAME line: "Ship To: John Smith"
+  const inlinePatterns = [
+    /^(?:Ship\s*To|Deliver\s*To|Consignee)\s*:\s*(.+)/i,
+    /^To\s*:\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/i,
+  ];
+
+  // Try inline patterns first - if inline value is valid, use it; otherwise check next lines
+  for (let i = 0; i < lines.length; i++) {
+    for (const pattern of inlinePatterns) {
+      const match = lines[i].match(pattern);
+      if (match && match[1]) {
+        const candidate = cleanCustomerName(match[1].trim());
+        if (candidate) return candidate;
+        // Inline value was garbage (e.g. "Ship To: 31/01") - check next lines for the actual name
+        for (let j = i + 1; j < Math.min(i + 3, lines.length); j++) {
+          const nextCandidate = cleanCustomerName(lines[j]);
+          if (nextCandidate) return nextCandidate;
+        }
+      }
+    }
+  }
+
+  // Try "header on one line, name on next line" pattern
+  for (let i = 0; i < lines.length - 1; i++) {
+    for (const pattern of shipToPatterns) {
+      if (pattern.test(lines[i])) {
+        // The next non-empty line should be the customer name
+        for (let j = i + 1; j < Math.min(i + 3, lines.length); j++) {
+          const candidate = cleanCustomerName(lines[j]);
+          if (candidate) return candidate;
+        }
+      }
+    }
+  }
+
+  // Fallback: look for "Customer Name:" or "Name:" pattern
+  for (const line of lines) {
+    const nameMatch = line.match(/(?:Customer\s*Name|Recipient|Buyer)\s*:\s*(.+)/i);
+    if (nameMatch && nameMatch[1]) {
+      const candidate = cleanCustomerName(nameMatch[1].trim());
+      if (candidate) return candidate;
+    }
+  }
+
+  return '';
+}
+
+/**
+ * Clean and validate a customer name candidate
+ */
+function cleanCustomerName(text) {
+  if (!text || text.length < 2) return '';
+
+  // Remove leading/trailing non-alpha chars
+  let name = text.replace(/^[^a-zA-Z]+/, '').replace(/[^a-zA-Z.\s]+$/, '').trim();
+
+  // Skip if it looks like an address (contains numbers, pin codes, etc.)
+  if (/\d{5,}/.test(name)) return '';
+  if (/pin\s*code/i.test(name)) return '';
+
+  // Skip known non-name patterns
+  if (/^(COD|PIN|SKU|QTY|DATE|ORDER|INVOICE|TOTAL|PRICE|ADDRESS|PHONE|MOBILE|EMAIL)/i.test(name)) return '';
+
+  // Skip if too short or too long for a name
+  if (name.length < 2 || name.length > 60) return '';
+
+  // Take only the name part (stop at comma or known address keywords)
+  name = name.split(/[,\n]/)[0].trim();
+  name = name.replace(/\s+(House|Floor|Flat|Block|Street|Road|Lane|Sector|Plot|Near|Opp|Behind|Village|Dist|Tehsil|PO|Post).*/i, '').trim();
+
+  // Validate: should contain at least one letter
+  if (!/[a-zA-Z]/.test(name)) return '';
+
+  // Title case the name
+  name = name.split(/\s+/).map(w =>
+    w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()
+  ).join(' ');
+
+  return name.length >= 2 ? name : '';
 }
 
 /**
@@ -1104,5 +1330,6 @@ module.exports = {
   extractCourierCompany,
   extractProductName,
   extractProducts,
-  extractOrderNumber // Exported
+  extractOrderNumber,
+  extractCustomerName
 };

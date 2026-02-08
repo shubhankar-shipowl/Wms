@@ -18,6 +18,7 @@ import Settings from "./pages/Settings";
 import Reconciliation from "./pages/Reconciliation";
 import Labels from "./pages/Labels"; // Added import
 import PickList from "./pages/PickList"; // Pick List page
+import PersonalizedNote from "./pages/PersonalizedNote";
 import LoadingSpinner from "./components/Common/LoadingSpinner";
 
 function App() {
@@ -54,6 +55,7 @@ function App() {
           <Route path="/reconciliation" element={<Reconciliation />} />
           <Route path="/labels" element={<Labels />} /> {/* Added route */}
           <Route path="/picklist" element={<PickList />} /> {/* Pick List */}
+          <Route path="/personalized-notes" element={<PersonalizedNote />} />
           <Route path="/alerts" element={<Alerts />} />
           {isAdmin && (
             <>

@@ -13,6 +13,7 @@ async function createTable() {
         quantity INT DEFAULT 1,
         price DECIMAL(10, 2) DEFAULT 0.00,
         order_number VARCHAR(100),
+        customer_name VARCHAR(255),
         label_date DATE,
         pdf_file_url TEXT NOT NULL,
         pdf_filename VARCHAR(255),
