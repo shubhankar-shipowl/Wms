@@ -1,14 +1,14 @@
 const { PDFDocument } = require('pdf-lib');
 const fs = require('fs');
 const path = require('path');
-const { extractLabelMetadata, extractProducts } = require('./pdfExtractor');
+const { extractLabelMetadata } = require('./pdfExtractor');
 
 /**
  * Split a multi-page PDF into individual page PDFs and extract metadata
  */
 async function splitPdfIntoPages(filePath, outputDir) {
   const results = [];
-  
+
   try {
     const pdfBytes = fs.readFileSync(filePath);
     const pdfDoc = await PDFDocument.load(pdfBytes);
@@ -16,6 +16,8 @@ async function splitPdfIntoPages(filePath, outputDir) {
 
     console.log(`Splitting PDF with ${pageCount} pages...`);
 
+    // Step 1: Split all pages into individual files first (fast, CPU-bound)
+    const pageFiles = [];
     for (let pageNum = 0; pageNum < pageCount; pageNum++) {
       try {
         const newPdfDoc = await PDFDocument.create();
@@ -25,40 +27,36 @@ async function splitPdfIntoPages(filePath, outputDir) {
         const pagePdfBytes = await newPdfDoc.save();
         const pageFileName = `page-${pageNum + 1}-${Date.now()}-${Math.round(Math.random() * 1E9)}.pdf`;
         const pageFilePath = path.join(outputDir, pageFileName);
-        
+
         fs.writeFileSync(pageFilePath, pagePdfBytes);
-
-        // Extract metadata using new function
-        const metadata = await extractLabelMetadata(pageFilePath);
-        
-        // Also extract products array for multi-product labels
-        // Read the PDF text to pass to extractProducts
-        const pdfParseModule = require('pdf-parse');
-        let products = [];
-        try {
-          const dataBuffer = fs.readFileSync(pageFilePath);
-          const parser = new pdfParseModule.PDFParse({ data: dataBuffer });
-          const textData = await parser.getText();
-          const text = textData.text || '';
-          await parser.destroy();
-          products = extractProducts(text);
-        } catch (e) {
-          console.error('Error extracting products:', e);
-        }
-        
-        // Add products to metadata
-        metadata.products = products;
-
-        results.push({
-          pageNumber: pageNum + 1,
-          filePath: pageFilePath,
-          filename: pageFileName,
-          metadata: metadata,
-        });
-
+        pageFiles.push({ pageNum: pageNum + 1, filePath: pageFilePath, filename: pageFileName });
       } catch (pageError) {
-        console.error(`Error processing page ${pageNum + 1}:`, pageError);
+        console.error(`Error splitting page ${pageNum + 1}:`, pageError);
       }
+    }
+
+    // Step 2: Extract metadata concurrently (with concurrency limit to avoid memory issues)
+    const CONCURRENCY = 3;
+    for (let i = 0; i < pageFiles.length; i += CONCURRENCY) {
+      const batch = pageFiles.slice(i, i + CONCURRENCY);
+      const batchResults = await Promise.all(
+        batch.map(async (pageFile) => {
+          try {
+            // extractLabelMetadata already returns products array - no need to parse again
+            const metadata = await extractLabelMetadata(pageFile.filePath);
+            return {
+              pageNumber: pageFile.pageNum,
+              filePath: pageFile.filePath,
+              filename: pageFile.filename,
+              metadata: metadata,
+            };
+          } catch (pageError) {
+            console.error(`Error processing page ${pageFile.pageNum}:`, pageError);
+            return null;
+          }
+        })
+      );
+      results.push(...batchResults.filter(Boolean));
     }
 
     return results;

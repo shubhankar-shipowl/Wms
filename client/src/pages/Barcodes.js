@@ -44,8 +44,55 @@ import axios from 'axios';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import JsBarcode from 'jsbarcode';
+import { jsPDF } from 'jspdf';
 import LoadingSpinner from '../components/Common/LoadingSpinner';
 import { useAuth } from '../contexts/AuthContext';
+
+// Utility: Download barcodes as PDF (one barcode per page)
+// Layout matches the thermal print function: SKU → Barcode → Barcode Number (no product name)
+const downloadBarcodePDF = (barcodes, product) => {
+  const pdf = new jsPDF('l', 'mm', [50, 25]); // Landscape, 50mm x 25mm label size
+  const pageW = 50;
+
+  barcodes.forEach((barcode, index) => {
+    if (index > 0) {
+      pdf.addPage([50, 25], 'l');
+    }
+
+    // SKU (top, matching print function)
+    pdf.setFontSize(7);
+    pdf.setFont(undefined, 'bold');
+    pdf.text(`SKU: ${product?.sku || 'N/A'}`, pageW / 2, 4, {
+      align: 'center',
+    });
+
+    // Generate barcode image (center)
+    const barcodeNumber =
+      typeof barcode === 'string' ? barcode : barcode.barcode;
+    const canvas = document.createElement('canvas');
+    try {
+      JsBarcode(canvas, barcodeNumber, {
+        format: 'CODE128',
+        width: 2,
+        height: 40,
+        displayValue: false,
+        margin: 0,
+      });
+      const imgData = canvas.toDataURL('image/png');
+      pdf.addImage(imgData, 'PNG', 3, 7, pageW - 6, 11);
+    } catch (err) {
+      console.error('PDF barcode generation error:', err);
+    }
+
+    // Barcode number text (below barcode)
+    pdf.setFontSize(7);
+    pdf.setFont('courier', 'bold');
+    pdf.text(barcodeNumber, pageW / 2, 23, { align: 'center' });
+  });
+
+  const fileName = `barcodes_${product?.sku || 'unknown'}_${new Date().toISOString().split('T')[0]}.pdf`;
+  pdf.save(fileName);
+};
 
 const BarcodeGenerationDialog = ({
   open,
@@ -114,6 +161,11 @@ const BarcodeGenerationDialog = ({
         onClose();
         setSelectedProduct(null);
         setQuantity(1);
+
+        // Download barcodes as PDF
+        if (response.data.data.barcodes) {
+          downloadBarcodePDF(response.data.data.barcodes, selectedProduct);
+        }
 
         // Trigger print dialog with generated barcodes after a short delay
         if (onPrintGenerated && response.data.data.barcodes) {

@@ -12,6 +12,7 @@
     "axios": "^1.6.2",
     "date-fns": "^2.30.0",
     "jsbarcode": "^3.12.1",
+    "jspdf": "^4.1.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-dropzone": "^14.4.0",

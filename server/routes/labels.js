@@ -5,8 +5,7 @@ const { pool } = require('../config/database');
 const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
-const { splitPdfIntoPages, getPdfPageCount } = require('../services/pdfSplitter');
-const { extractLabelMetadata } = require('../services/pdfExtractor');
+const { splitPdfIntoPages } = require('../services/pdfSplitter');
 const archiver = require('archiver');
 const { PDFDocument } = require('pdf-lib');
 
@@ -216,89 +215,121 @@ router.post('/upload', authenticateToken, upload.array('files', 50), async (req,
     const processed = [];
     const failed = [];
 
-    // Allow manual overrides from body (if uploading single file contexts)
-    // For bulk upload, we rely on extraction
-    
     for (const file of req.files) {
       try {
-        const pageCount = await getPdfPageCount(file.path);
-        
         // Prepare split directory
         const splitDir = path.join(path.dirname(file.path), 'split-pages');
         if (!fs.existsSync(splitDir)) fs.mkdirSync(splitDir, { recursive: true });
 
-        // Split and Extract
+        // Split and Extract (concurrency handled inside splitPdfIntoPages)
         const pages = await splitPdfIntoPages(file.path, splitDir);
 
-        for (const page of pages) {
-          // Map new property names from pdfExtractor
-          const store_name = page.metadata.brand_name || page.metadata.store_name || 'Unknown Store';
+        // --- Batch duplicate check: collect all order numbers at once ---
+        const orderEntries = []; // { index, orderNumber, courier_name }
+        const duplicateSet = new Set(); // indices to skip
+
+        for (let i = 0; i < pages.length; i++) {
+          const page = pages[i];
           const courier_name = page.metadata.courier_company || page.metadata.courier_name || 'Unknown Courier';
-          
-          // Get products array - if available, otherwise fall back to single product_name
-          const products = page.metadata.products || [];
-          const singleProductName = page.metadata.product_name || 'Unknown Product';
-          
-          const relativePath = path.relative(path.join(__dirname, '../../'), page.filePath);
-
-          // Generate unique label_id for this label (shared across all products on same label)
-          const labelId = `LABEL-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
-          
           const orderNumber = page.metadata.order_number || null;
-
-          // DUPLICATE CHECK
-          // Query DB to see if this order number + courier already exists
           if (orderNumber) {
-            const [existing] = await pool.execute(
-              'SELECT id FROM labels WHERE order_number = ? AND courier_name = ? LIMIT 1',
-              [orderNumber, courier_name]
-            );
-            
-            if (existing.length > 0) {
-              // Mark as failed/duplicate
-              failed.push({ 
-                file: page.filename || file.originalname, 
-                error: `Duplicate Label: Order/AWB ${orderNumber} already exists.` 
+            orderEntries.push({ index: i, orderNumber, courier_name });
+          }
+        }
+
+        if (orderEntries.length > 0) {
+          // Build a single query: WHERE (order_number = ? AND courier_name = ?) OR ...
+          const conditions = orderEntries.map(() => '(order_number = ? AND courier_name = ?)').join(' OR ');
+          const params = [];
+          orderEntries.forEach(e => { params.push(e.orderNumber, e.courier_name); });
+
+          const [existingRows] = await pool.execute(
+            `SELECT order_number, courier_name FROM labels WHERE ${conditions}`,
+            params
+          );
+
+          const existingKeys = new Set(existingRows.map(r => `${r.order_number}||${r.courier_name}`));
+
+          for (const entry of orderEntries) {
+            if (existingKeys.has(`${entry.orderNumber}||${entry.courier_name}`)) {
+              duplicateSet.add(entry.index);
+              failed.push({
+                file: pages[entry.index].filename || file.originalname,
+                error: `Duplicate Label: Order/AWB ${entry.orderNumber} already exists.`
               });
-              continue; // Skip insertion
             }
           }
+        }
 
-          // Determine products to insert
-          const productsToInsert = products.length > 0 
-            ? products 
+        // --- Batch insert: collect all rows, then insert in one query ---
+        const insertRows = [];
+
+        for (let i = 0; i < pages.length; i++) {
+          if (duplicateSet.has(i)) continue; // Skip duplicates
+
+          const page = pages[i];
+          const store_name = page.metadata.brand_name || page.metadata.store_name || 'Unknown Store';
+          const courier_name = page.metadata.courier_company || page.metadata.courier_name || 'Unknown Courier';
+          const products = page.metadata.products || [];
+          const singleProductName = page.metadata.product_name || 'Unknown Product';
+          const relativePath = path.relative(path.join(__dirname, '../../'), page.filePath);
+          const labelId = `LABEL-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
+          const orderNumber = page.metadata.order_number || null;
+
+          const productsToInsert = products.length > 0
+            ? products
             : [{ product_name: singleProductName, quantity: 1, price: 0 }];
 
-          // Insert each product as separate entry (same label_id groups them)
           for (const product of productsToInsert) {
-            const [result] = await pool.execute(
-              `INSERT INTO labels (
-                label_id, store_name, courier_name, product_name, 
-                sku, quantity, price,
-                pdf_file_url, pdf_filename, created_by, order_number
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [
-                labelId,
-                store_name, 
-                courier_name, 
-                product.product_name || 'Unknown Product',
-                product.sku || '',
-                product.quantity || 1,
-                product.price || 0,
-                relativePath, 
-                page.filename, 
-                req.user.id,
-                orderNumber // Save extracted Order/AWB
-              ]
-            );
-
-            processed.push({
-              id: result.insertId,
+            insertRows.push({
+              labelId,
+              store_name,
+              courier_name,
+              product_name: product.product_name || 'Unknown Product',
+              sku: product.sku || '',
+              quantity: product.quantity || 1,
+              price: product.price || 0,
+              relativePath,
               filename: page.filename,
-              label_id: labelId,
-              metadata: { store_name, courier_name, product_name: product.product_name, order_number: orderNumber }
+              userId: req.user.id,
+              orderNumber
             });
           }
+        }
+
+        // Batch insert in chunks of 50 to avoid query size limits
+        const BATCH_SIZE = 50;
+        for (let b = 0; b < insertRows.length; b += BATCH_SIZE) {
+          const batch = insertRows.slice(b, b + BATCH_SIZE);
+          const placeholders = batch.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
+          const values = [];
+          batch.forEach(row => {
+            values.push(
+              row.labelId, row.store_name, row.courier_name, row.product_name,
+              row.sku, row.quantity, row.price,
+              row.relativePath, row.filename, row.userId, row.orderNumber
+            );
+          });
+
+          const [result] = await pool.execute(
+            `INSERT INTO labels (
+              label_id, store_name, courier_name, product_name,
+              sku, quantity, price,
+              pdf_file_url, pdf_filename, created_by, order_number
+            ) VALUES ${placeholders}`,
+            values
+          );
+
+          // Map inserted IDs back to processed results
+          const firstId = result.insertId;
+          batch.forEach((row, idx) => {
+            processed.push({
+              id: firstId + idx,
+              filename: row.filename,
+              label_id: row.labelId,
+              metadata: { store_name: row.store_name, courier_name: row.courier_name, product_name: row.product_name, order_number: row.orderNumber }
+            });
+          });
         }
 
       } catch (e) {

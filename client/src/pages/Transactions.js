@@ -26,6 +26,7 @@ import {
   DialogContent,
   DialogActions,
   Pagination,
+  Autocomplete,
 } from "@mui/material";
 import {
   Search,
@@ -291,23 +292,27 @@ const Transactions = () => {
               />
             </Grid>
             <Grid item xs={12} sm={6} md={3}>
-              <FormControl fullWidth>
-                <InputLabel>Product</InputLabel>
-                <Select
-                  value={filters.product_id}
-                  onChange={(e) =>
-                    handleFilterChange("product_id", e.target.value)
-                  }
-                  label="Product"
-                >
-                  <MenuItem value="">All Products</MenuItem>
-                  {productsData?.data?.products?.map((product) => (
-                    <MenuItem key={product.id} value={product.id}>
-                      {product.name} ({product.sku})
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
+              <Autocomplete
+                options={productsData?.data?.products || []}
+                getOptionLabel={(option) =>
+                  `${option.name} (${option.sku})`
+                }
+                value={
+                  productsData?.data?.products?.find(
+                    (p) => p.id === filters.product_id
+                  ) || null
+                }
+                onChange={(e, newValue) =>
+                  handleFilterChange("product_id", newValue ? newValue.id : "")
+                }
+                renderInput={(params) => (
+                  <TextField {...params} label="Product" />
+                )}
+                isOptionEqualToValue={(option, value) =>
+                  option.id === value.id
+                }
+                fullWidth
+              />
             </Grid>
             <Grid item xs={12} sm={6} md={1.5}>
               <FormControl fullWidth>
