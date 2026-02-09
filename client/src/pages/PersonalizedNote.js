@@ -4,7 +4,7 @@ import {
   FormControl, InputLabel, Select, MenuItem, IconButton,
   Divider, Chip
 } from '@mui/material';
-import { Download, Add, Delete, Favorite, Sync } from '@mui/icons-material';
+import { Download, Add, Delete, Favorite, CloudUpload, Close } from '@mui/icons-material';
 import { useQuery } from 'react-query';
 import axios from 'axios';
 import jsPDF from 'jspdf';
@@ -47,7 +47,7 @@ const HeartSvg = ({ size = 80, color = THEME.heartLight, style = {} }) => (
   </svg>
 );
 
-const NoteCard = ({ name, storeName, messages, size }) => {
+const NoteCard = ({ name, storeName, storeLogo, messages, size }) => {
   const scale = size === 'print' ? 1 : 0.85;
   const isPreview = size !== 'print';
 
@@ -109,31 +109,54 @@ const NoteCard = ({ name, storeName, messages, size }) => {
         />
       </Box>
 
-      {/* Store Name Box */}
-      <Box
-        sx={{
-          bgcolor: THEME.storeBg,
-          px: 2.5,
-          py: 0.6,
-          borderRadius: '4px',
-          zIndex: 1,
-          mt: isPreview ? '55px' : '0.5in',
-          mb: 0,
-          boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
-        }}
-      >
-        <Typography
+      {/* Store Logo or Store Name */}
+      {storeLogo ? (
+        <Box
           sx={{
-            fontWeight: 800,
-            fontSize: 15 * scale,
-            color: THEME.storeText,
-            letterSpacing: 0.5,
-            fontFamily: '"Segoe UI", Arial, sans-serif',
+            zIndex: 1,
+            mt: isPreview ? '45px' : '0.4in',
+            mb: 0,
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
           }}
         >
-          {storeName || 'Store Name'}
-        </Typography>
-      </Box>
+          <img
+            src={storeLogo}
+            alt="Store Logo"
+            style={{
+              maxHeight: isPreview ? 45 : 55,
+              maxWidth: isPreview ? 140 : 170,
+              objectFit: 'contain',
+            }}
+          />
+        </Box>
+      ) : (
+        <Box
+          sx={{
+            bgcolor: THEME.storeBg,
+            px: 2.5,
+            py: 0.6,
+            borderRadius: '4px',
+            zIndex: 1,
+            mt: isPreview ? '55px' : '0.5in',
+            mb: 0,
+            boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
+          }}
+        >
+          <Typography
+            sx={{
+              fontWeight: 800,
+              fontSize: 15 * scale,
+              color: THEME.storeText,
+              letterSpacing: 0.5,
+              fontFamily: '"Segoe UI", Arial, sans-serif',
+            }}
+          >
+            {storeName || 'Store Name'}
+          </Typography>
+        </Box>
+      )}
 
       {/* Main Content */}
       <Box
@@ -241,9 +264,12 @@ const NoteCard = ({ name, storeName, messages, size }) => {
 const PersonalizedNote = () => {
   const [names, setNames] = useState([{ id: 1, value: '', store: '' }]);
   const [defaultStore, setDefaultStore] = useState('');
-  const [selectedProduct, setSelectedProduct] = useState('');
+  const [selectedProduct, setSelectedProduct] = useState('all');
+  const [storeLogos, setStoreLogos] = useState({});
   const [messages, setMessages] = useState({ ...NOTE_MESSAGES });
   const printRef = useRef();
+  const logoInputRef = useRef();
+  const [logoUploadStore, setLogoUploadStore] = useState('');
 
   // Load Satisfy font for script-style "you,"
   useEffect(() => {
@@ -256,6 +282,79 @@ const PersonalizedNote = () => {
     };
   }, []);
 
+  // Fetch all store logos from DB on mount
+  useEffect(() => {
+    const fetchLogos = async () => {
+      try {
+        const { data } = await axios.get('/api/labels/store-logos');
+        if (!data.stores || data.stores.length === 0) return;
+        const logos = {};
+        await Promise.all(data.stores.map(async (storeName) => {
+          try {
+            const res = await axios.get(`/api/labels/store-logo/${encodeURIComponent(storeName)}`, { responseType: 'blob' });
+            const dataUrl = await new Promise((resolve) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result);
+              reader.readAsDataURL(res.data);
+            });
+            logos[storeName] = dataUrl;
+          } catch (err) {
+            // Skip failed logo
+          }
+        }));
+        setStoreLogos(logos);
+      } catch (err) {
+        // No logos stored yet
+      }
+    };
+    fetchLogos();
+  }, []);
+
+  const handleLogoUpload = async (e) => {
+    const file = e.target.files[0];
+    const storeName = logoUploadStore;
+    if (!file || !storeName) return;
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please upload an image file (PNG, JPG, etc.)');
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error('Logo must be under 2MB');
+      return;
+    }
+    try {
+      const formData = new FormData();
+      formData.append('logo', file);
+      formData.append('store_name', storeName);
+      await axios.post('/api/labels/store-logo', formData);
+      const dataUrl = await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.readAsDataURL(file);
+      });
+      setStoreLogos(prev => ({ ...prev, [storeName]: dataUrl }));
+      toast.success(`Logo uploaded for ${storeName}`);
+    } catch (err) {
+      toast.error('Failed to upload logo');
+    }
+    e.target.value = '';
+    setLogoUploadStore('');
+  };
+
+  const removeLogo = async (storeName) => {
+    try {
+      await axios.delete(`/api/labels/store-logo/${encodeURIComponent(storeName)}`);
+      setStoreLogos(prev => {
+        const updated = { ...prev };
+        delete updated[storeName];
+        return updated;
+      });
+      toast.success(`Logo removed for ${storeName}`);
+    } catch (err) {
+      toast.error('Failed to remove logo');
+    }
+  };
+
   const { data: notesData, refetch } = useQuery(
     'personalized-notes-data',
     () => axios.get('/api/labels/personalized-notes-data').then(res => res.data),
@@ -265,14 +364,16 @@ const PersonalizedNote = () => {
   const availableStores = notesData?.stores || [];
   const availableProducts = notesData?.products || [];
 
-  const loadFromLabels = async () => {
+  const loadFromLabels = async (product) => {
+    const raw = product !== undefined ? product : selectedProduct;
+    const productFilter = raw === 'all' ? '' : raw;
     try {
-      const params = selectedProduct ? `?product=${encodeURIComponent(selectedProduct)}` : '';
+      const params = productFilter ? `?product=${encodeURIComponent(productFilter)}` : '';
       const { data: freshData } = await axios.get(`/api/labels/personalized-notes-data${params}`);
       const entries = freshData?.entries || [];
       if (entries.length === 0) {
-        toast.error(selectedProduct
-          ? `No customer names found for product "${selectedProduct}". Try a different product or clear the filter.`
+        toast.error(productFilter
+          ? `No customer names found for product "${productFilter}". Try a different product or clear the filter.`
           : 'No customer names found in uploaded labels. Re-upload labels to extract names.');
         return;
       }
@@ -281,11 +382,31 @@ const PersonalizedNote = () => {
         value: entry.customer_name.split(' ')[0],
         store: entry.store_name || ''
       })));
-      toast.success(`Loaded ${entries.length} customer name(s)${selectedProduct ? ` for "${selectedProduct}"` : ' from labels'}`);
+      toast.success(`Loaded ${entries.length} customer name(s)${productFilter ? ` for "${productFilter}"` : ' from labels'}`);
     } catch (error) {
       toast.error('Failed to load customer names');
     }
   };
+
+  // Auto-load all customer names from labels on first page visit
+  useEffect(() => {
+    const autoLoad = async () => {
+      try {
+        const { data } = await axios.get('/api/labels/personalized-notes-data');
+        const entries = data?.entries || [];
+        if (entries.length > 0) {
+          setNames(entries.map((entry, i) => ({
+            id: Date.now() + i,
+            value: entry.customer_name.split(' ')[0],
+            store: entry.store_name || ''
+          })));
+        }
+      } catch (err) {
+        // Silent fail on auto-load
+      }
+    };
+    autoLoad();
+  }, []);
 
   const getStoreName = (entry) => entry.store || defaultStore || '';
 
@@ -346,71 +467,75 @@ const PersonalizedNote = () => {
   const handleDownloadPDF = () => {
     if (validNames.length === 0) return;
 
-    const pdf = new jsPDF('p', 'in', 'a4');
-    const pageW = 8.27;
-    const pageH = 11.69;
-    const cols = 3;
-    const rows = 3;
-    const perPage = cols * rows;
-    const marginX = 0.35;
-    const marginY = 0.2;
-    const gapX = 0.15;
-    const gapY = 0.15;
-    const cardW = (pageW - 2 * marginX - (cols - 1) * gapX) / cols;
-    const cardH = (pageH - 2 * marginY - (rows - 1) * gapY) / rows;
+    // Accepts a map of { storeName: Image } for per-store logos
+    const generatePdf = (logoImgMap) => {
+      const pdf = new jsPDF('p', 'in', 'a4');
+      const pageW = 8.27;
+      const pageH = 11.69;
+      const cols = 3;
+      const rows = 3;
+      const perPage = cols * rows;
+      const marginX = 0.35;
+      const marginY = 0.2;
+      const gapX = 0.15;
+      const gapY = 0.15;
+      const cardW = (pageW - 2 * marginX - (cols - 1) * gapX) / cols;
+      const cardH = (pageH - 2 * marginY - (rows - 1) * gapY) / rows;
 
-    validNames.forEach((n, idx) => {
-      const posOnPage = idx % perPage;
-      const col = posOnPage % cols;
-      const row = Math.floor(posOnPage / cols);
+      validNames.forEach((n, idx) => {
+        const posOnPage = idx % perPage;
+        const col = posOnPage % cols;
+        const row = Math.floor(posOnPage / cols);
 
-      if (idx > 0 && posOnPage === 0) {
-        pdf.addPage();
-      }
+        if (idx > 0 && posOnPage === 0) {
+          pdf.addPage();
+        }
 
-      const x = marginX + col * (cardW + gapX);
-      const y = marginY + row * (cardH + gapY);
-      const cardStore = getStoreName(n) || 'Store Name';
-      const centerX = x + cardW / 2;
+        const x = marginX + col * (cardW + gapX);
+        const y = marginY + row * (cardH + gapY);
+        const cardStore = getStoreName(n) || 'Store Name';
+        const centerX = x + cardW / 2;
 
-      // Card background - cream
-      pdf.setFillColor(251, 247, 242);
-      pdf.roundedRect(x, y, cardW, cardH, 0.08, 0.08, 'F');
+        // Card background - cream
+        pdf.setFillColor(251, 247, 242);
+        pdf.roundedRect(x, y, cardW, cardH, 0.08, 0.08, 'F');
 
-      // Hearts INSIDE card bounds (positioned at corners but contained)
-      // Top-left: heart center just inside top-left corner
-      drawPdfHeart(pdf, x + 0.25, y + 0.28, 0.42, 197, 222, 242, x, y, cardW, cardH);
-      // Top-right: heart center just inside top-right corner
-      drawPdfHeart(pdf, x + cardW - 0.22, y + 0.3, 0.45, 197, 222, 242, x, y, cardW, cardH);
-      // Bottom-left
-      drawPdfHeart(pdf, x + 0.22, y + cardH - 0.25, 0.32, 197, 222, 242, x, y, cardW, cardH);
-      // Bottom-right
-      drawPdfHeart(pdf, x + cardW - 0.2, y + cardH - 0.22, 0.38, 197, 222, 242, x, y, cardW, cardH);
-      // Small solid blue heart
-      drawPdfHeart(pdf, x + 0.26, y + cardH * 0.24, 0.08, 92, 184, 245, x, y, cardW, cardH);
+        // Hearts INSIDE card bounds (positioned at corners but contained)
+        drawPdfHeart(pdf, x + 0.25, y + 0.28, 0.42, 197, 222, 242, x, y, cardW, cardH);
+        drawPdfHeart(pdf, x + cardW - 0.22, y + 0.3, 0.45, 197, 222, 242, x, y, cardW, cardH);
+        drawPdfHeart(pdf, x + 0.22, y + cardH - 0.25, 0.32, 197, 222, 242, x, y, cardW, cardH);
+        drawPdfHeart(pdf, x + cardW - 0.2, y + cardH - 0.22, 0.38, 197, 222, 242, x, y, cardW, cardH);
+        drawPdfHeart(pdf, x + 0.26, y + cardH * 0.24, 0.08, 92, 184, 245, x, y, cardW, cardH);
 
-      // Redraw card background edges to clean up any heart overflow
-      // Top edge cover
-      pdf.setFillColor(255, 255, 255);
-      pdf.rect(x - 0.02, y - 0.04, cardW + 0.04, 0.04, 'F');
-      // Bottom edge cover
-      pdf.rect(x - 0.02, y + cardH, cardW + 0.04, 0.04, 'F');
-      // Left edge cover
-      pdf.rect(x - 0.04, y - 0.02, 0.04, cardH + 0.04, 'F');
-      // Right edge cover
-      pdf.rect(x + cardW, y - 0.02, 0.04, cardH + 0.04, 'F');
+        // Redraw card background edges to clean up any heart overflow
+        pdf.setFillColor(255, 255, 255);
+        pdf.rect(x - 0.02, y - 0.04, cardW + 0.04, 0.04, 'F');
+        pdf.rect(x - 0.02, y + cardH, cardW + 0.04, 0.04, 'F');
+        pdf.rect(x - 0.04, y - 0.02, 0.04, cardH + 0.04, 'F');
+        pdf.rect(x + cardW, y - 0.02, 0.04, cardH + 0.04, 'F');
 
-      // Store name white box
-      const storeW = Math.min(1.5, cardW * 0.65);
-      const storeH = 0.26;
-      const storeX = centerX - storeW / 2;
-      const storeY = y + 0.38;
-      pdf.setFillColor(255, 255, 255);
-      pdf.roundedRect(storeX, storeY, storeW, storeH, 0.03, 0.03, 'F');
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(8);
-      pdf.setTextColor(26, 26, 26);
-      pdf.text(cardStore, centerX, storeY + 0.17, { align: 'center' });
+        // Store logo or store name
+        const logoImg = logoImgMap[cardStore];
+        if (logoImg) {
+          const imgRatio = logoImg.naturalWidth / logoImg.naturalHeight;
+          const logoH = 0.4;
+          const logoW = Math.min(logoH * imgRatio, cardW * 0.65);
+          const logoX = centerX - logoW / 2;
+          const logoY = y + 0.3;
+          const alias = 'logo-' + cardStore.replace(/[^a-zA-Z0-9]/g, '_');
+          pdf.addImage(logoImg, 'PNG', logoX, logoY, logoW, logoH, alias, 'FAST');
+        } else {
+          const storeW = Math.min(1.5, cardW * 0.65);
+          const storeH = 0.26;
+          const storeX = centerX - storeW / 2;
+          const storeY = y + 0.38;
+          pdf.setFillColor(255, 255, 255);
+          pdf.roundedRect(storeX, storeY, storeW, storeH, 0.03, 0.03, 'F');
+          pdf.setFont('helvetica', 'bold');
+          pdf.setFontSize(8);
+          pdf.setTextColor(26, 26, 26);
+          pdf.text(cardStore, centerX, storeY + 0.17, { align: 'center' });
+        }
 
       // Content area - centered text
       // "Hi NAME," - positioned at ~38% from top, medium blue
@@ -471,9 +596,41 @@ const PersonalizedNote = () => {
       pdf.setDrawColor(230, 230, 230);
       pdf.setLineWidth(0.008);
       pdf.roundedRect(x, y, cardW, cardH, 0.08, 0.08);
-    });
+      });
 
-    pdf.save('personalized-notes.pdf');
+      pdf.save('personalized-notes.pdf');
+    };
+
+    // Preload all store logos, convert to PNG via canvas for reliable jsPDF embedding
+    const storeNames = Object.keys(storeLogos);
+    if (storeNames.length > 0) {
+      const logoImgMap = {};
+      let loaded = 0;
+      const total = storeNames.length;
+      const onDone = () => {
+        loaded++;
+        if (loaded === total) generatePdf(logoImgMap);
+      };
+      storeNames.forEach(storeName => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.naturalWidth;
+          canvas.height = img.naturalHeight;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0);
+          const pngDataUrl = canvas.toDataURL('image/png');
+          const pngImg = new Image();
+          pngImg.onload = () => { logoImgMap[storeName] = pngImg; onDone(); };
+          pngImg.onerror = () => onDone();
+          pngImg.src = pngDataUrl;
+        };
+        img.onerror = () => onDone();
+        img.src = storeLogos[storeName];
+      });
+    } else {
+      generatePdf({});
+    }
   };
 
   return (
@@ -527,15 +684,80 @@ const PersonalizedNote = () => {
 
             <Divider sx={{ my: 2 }} />
 
+            <Typography variant="subtitle2" sx={{ mb: 1 }}>Store Logos</Typography>
+            <input
+              type="file"
+              accept="image/*"
+              ref={logoInputRef}
+              onChange={handleLogoUpload}
+              style={{ display: 'none' }}
+            />
+            {availableStores.length > 0 ? (
+              <Stack spacing={1} sx={{ mb: 1 }}>
+                {availableStores.map(store => (
+                  <Box key={store} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Typography variant="caption" sx={{ minWidth: 60, color: 'text.secondary', fontSize: '0.7rem' }} noWrap title={store}>
+                      {store}
+                    </Typography>
+                    {storeLogos[store] ? (
+                      <>
+                        <Box
+                          sx={{
+                            border: '1px solid #e0e0e0',
+                            borderRadius: 1,
+                            p: 0.3,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            bgcolor: '#fafafa',
+                            flex: 1,
+                            minHeight: 30,
+                          }}
+                        >
+                          <img
+                            src={storeLogos[store]}
+                            alt={store}
+                            style={{ maxHeight: 28, maxWidth: '100%', objectFit: 'contain' }}
+                          />
+                        </Box>
+                        <IconButton size="small" onClick={() => removeLogo(store)} color="error" title="Remove logo">
+                          <Close sx={{ fontSize: 14 }} />
+                        </IconButton>
+                      </>
+                    ) : (
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        startIcon={<CloudUpload sx={{ fontSize: 14 }} />}
+                        onClick={() => { setLogoUploadStore(store); setTimeout(() => logoInputRef.current.click(), 0); }}
+                        sx={{ flex: 1, fontSize: '0.7rem', py: 0.3 }}
+                      >
+                        Upload
+                      </Button>
+                    )}
+                  </Box>
+                ))}
+              </Stack>
+            ) : (
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                Load labels first to see available stores.
+              </Typography>
+            )}
+            <Typography variant="caption" color="text.secondary">
+              Upload a logo per store. Stores without a logo will show the store name as text.
+            </Typography>
+
+            <Divider sx={{ my: 2 }} />
+
             <Typography variant="subtitle2" sx={{ mb: 1 }}>Product</Typography>
             <FormControl fullWidth size="small" sx={{ mb: 1 }}>
               <InputLabel>Select product</InputLabel>
               <Select
                 value={selectedProduct}
                 label="Select product"
-                onChange={(e) => setSelectedProduct(e.target.value)}
+                onChange={(e) => { setSelectedProduct(e.target.value); loadFromLabels(e.target.value); }}
               >
-                <MenuItem value="">All Products</MenuItem>
+                <MenuItem value="all">All Products</MenuItem>
                 {availableProducts.map(product => (
                   <MenuItem key={product} value={product}>{product}</MenuItem>
                 ))}
@@ -584,14 +806,9 @@ const PersonalizedNote = () => {
                   <Chip label={validNames.length} size="small" color="primary" sx={{ ml: 1 }} />
                 )}
               </Typography>
-              <Stack direction="row" spacing={0.5}>
-                <Button size="small" startIcon={<Sync />} onClick={loadFromLabels} color="secondary">
-                  From Labels
-                </Button>
-                <Button size="small" startIcon={<Add />} onClick={addName}>
-                  Add
-                </Button>
-              </Stack>
+              <Button size="small" startIcon={<Add />} onClick={addName}>
+                Add
+              </Button>
             </Box>
 
             <TextField
@@ -671,6 +888,7 @@ const PersonalizedNote = () => {
                   <NoteCard
                     name="Manjunath"
                     storeName="ShoppersKart"
+                    storeLogo={storeLogos['ShoppersKart'] || ''}
                     messages={messages}
                     size="preview"
                   />
@@ -690,15 +908,19 @@ const PersonalizedNote = () => {
                   justifyContent: 'center',
                 }}
               >
-                {validNames.map(n => (
-                  <NoteCard
-                    key={n.id}
-                    name={n.value}
-                    storeName={getStoreName(n)}
-                    messages={messages}
-                    size="preview"
-                  />
-                ))}
+                {validNames.map(n => {
+                  const store = getStoreName(n);
+                  return (
+                    <NoteCard
+                      key={n.id}
+                      name={n.value}
+                      storeName={store}
+                      storeLogo={storeLogos[store] || ''}
+                      messages={messages}
+                      size="preview"
+                    />
+                  );
+                })}
               </Box>
             )}
           </Paper>

@@ -23,13 +23,26 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ 
+const upload = multer({
   storage: storage,
   fileFilter: (req, file, cb) => {
     if (file.mimetype === 'application/pdf') {
       cb(null, true);
     } else {
       cb(new Error('Only PDF files are allowed'), false);
+    }
+  }
+});
+
+// Separate multer for logo upload (memory storage, image files)
+const logoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed'), false);
     }
   }
 });
@@ -252,6 +265,105 @@ router.get('/personalized-notes-data', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Error fetching personalized notes data:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch data' });
+  }
+});
+
+/**
+ * Ensure store_logos table exists (per-store logos)
+ */
+const ensureStoreLogosTable = async () => {
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS store_logos (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      store_name VARCHAR(255) NOT NULL UNIQUE,
+      image_data LONGBLOB NOT NULL,
+      mime_type VARCHAR(100) NOT NULL,
+      file_size INT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )
+  `);
+};
+
+/**
+ * POST /store-logo
+ * Upload logo for a specific store (stored as LONGBLOB in DB)
+ */
+router.post('/store-logo', authenticateToken, logoUpload.single('logo'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'No file uploaded' });
+    }
+    const storeName = req.body.store_name;
+    if (!storeName) {
+      return res.status(400).json({ success: false, message: 'store_name is required' });
+    }
+
+    await ensureStoreLogosTable();
+
+    await pool.execute(
+      `INSERT INTO store_logos (store_name, image_data, mime_type, file_size) VALUES (?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE image_data = VALUES(image_data), mime_type = VALUES(mime_type), file_size = VALUES(file_size)`,
+      [storeName, req.file.buffer, req.file.mimetype, req.file.size]
+    );
+
+    res.json({ success: true, message: 'Store logo uploaded' });
+  } catch (error) {
+    console.error('Error uploading store logo:', error);
+    res.status(500).json({ success: false, message: 'Failed to upload logo' });
+  }
+});
+
+/**
+ * GET /store-logos
+ * Returns list of store names that have logos uploaded
+ */
+router.get('/store-logos', authenticateToken, async (req, res) => {
+  try {
+    await ensureStoreLogosTable();
+    const [rows] = await pool.execute('SELECT store_name FROM store_logos ORDER BY store_name ASC');
+    res.json({ success: true, stores: rows.map(r => r.store_name) });
+  } catch (error) {
+    console.error('Error fetching store logos list:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch logos' });
+  }
+});
+
+/**
+ * GET /store-logo/:storeName
+ * Retrieve logo image for a specific store
+ */
+router.get('/store-logo/:storeName', authenticateToken, async (req, res) => {
+  try {
+    await ensureStoreLogosTable();
+    const [rows] = await pool.execute(
+      'SELECT image_data, mime_type FROM store_logos WHERE store_name = ?',
+      [req.params.storeName]
+    );
+    if (rows.length === 0 || !rows[0].image_data) {
+      return res.status(404).json({ success: false, message: 'No logo found' });
+    }
+    res.set('Content-Type', rows[0].mime_type);
+    res.set('Cache-Control', 'public, max-age=3600');
+    res.send(rows[0].image_data);
+  } catch (error) {
+    console.error('Error fetching store logo:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch logo' });
+  }
+});
+
+/**
+ * DELETE /store-logo/:storeName
+ * Remove logo for a specific store
+ */
+router.delete('/store-logo/:storeName', authenticateToken, async (req, res) => {
+  try {
+    await ensureStoreLogosTable();
+    await pool.execute('DELETE FROM store_logos WHERE store_name = ?', [req.params.storeName]);
+    res.json({ success: true, message: 'Store logo removed' });
+  } catch (error) {
+    console.error('Error deleting store logo:', error);
+    res.status(500).json({ success: false, message: 'Failed to remove logo' });
   }
 });
 
