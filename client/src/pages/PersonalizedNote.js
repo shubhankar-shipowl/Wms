@@ -1,58 +1,134 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Box, Typography, TextField, Button, Paper, Grid, Stack,
   FormControl, InputLabel, Select, MenuItem, IconButton,
   Divider, Chip
 } from '@mui/material';
-import { Print, Download, Add, Delete, Favorite, Sync } from '@mui/icons-material';
+import { Download, Add, Delete, Favorite, Sync } from '@mui/icons-material';
 import { useQuery } from 'react-query';
 import axios from 'axios';
 import jsPDF from 'jspdf';
 import { toast } from 'react-hot-toast';
 
 const NOTE_MESSAGES = {
-  thankYou: 'Thank you so much for ordering from us!',
-  packed: 'We packed it with care just for you'
+  thankYou: 'for ordering from us!',
+  packed: 'we packed it with LOVE just for you !'
 };
+
+// Pink Minimalist design colors
+const THEME = {
+  bg: '#FBF7F2',
+  heartLight: '#C5DEF2',
+  heartFill: '#5CB8F5',
+  textDark: '#0D47A1',     // "Thank" only - darkest blue
+  textMedium: '#1565C0',   // "Hi Name," and messages - medium blue
+  textScript: '#3949AB',   // "you," - indigo/blue-purple
+  storeBg: 'rgba(255,255,255,0.92)',
+  storeText: '#1A1A1A',
+  heartSmall: '#C0CAD8',   // tiny heart after "you," - light grey
+};
+
+// SVG Heart shape
+const HeartSvg = ({ size = 80, color = THEME.heartLight, style = {} }) => (
+  <svg
+    viewBox="0 0 100 100"
+    style={{
+      position: 'absolute',
+      width: size,
+      height: size,
+      pointerEvents: 'none',
+      ...style,
+    }}
+  >
+    <path
+      d="M50 90C50 90 10 65 5 35C0 15 15 0 30 0C40 0 48 8 50 15C52 8 60 0 70 0C85 0 100 15 95 35C90 65 50 90 50 90Z"
+      fill={color}
+    />
+  </svg>
+);
 
 const NoteCard = ({ name, storeName, messages, size }) => {
   const scale = size === 'print' ? 1 : 0.85;
+  const isPreview = size !== 'print';
+
   return (
     <Box
       sx={{
-        width: size === 'print' ? '3.5in' : 280,
-        height: size === 'print' ? '4.5in' : 340,
-        border: '2px solid #e0e0e0',
-        borderRadius: '16px',
+        width: isPreview ? 280 : '3.5in',
+        height: isPreview ? 340 : '4.5in',
+        borderRadius: '10px',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
-        justifyContent: 'space-between',
-        p: size === 'print' ? '0.4in' : 3,
-        bgcolor: '#fafafa',
+        bgcolor: THEME.bg,
         position: 'relative',
         overflow: 'hidden',
         boxSizing: 'border-box',
         pageBreakInside: 'avoid',
+        boxShadow: '0 2px 12px rgba(0,0,0,0.06)',
       }}
     >
-      {/* Store Name Badge */}
+      {/* Hearts container - absolutely positioned, clipped by parent overflow:hidden */}
       <Box
         sx={{
-          border: '2px solid #555',
-          borderRadius: '8px',
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          overflow: 'hidden',
+          pointerEvents: 'none',
+          zIndex: 0,
+        }}
+      >
+        {/* Top-left heart */}
+        <HeartSvg
+          size={isPreview ? 100 : 120}
+          style={{ top: isPreview ? -25 : -30, left: isPreview ? -22 : -28, transform: 'rotate(-15deg)' }}
+        />
+        {/* Top-right heart */}
+        <HeartSvg
+          size={isPreview ? 110 : 130}
+          style={{ top: isPreview ? -20 : -24, right: isPreview ? -28 : -34, transform: 'rotate(15deg)' }}
+        />
+        {/* Bottom-left heart */}
+        <HeartSvg
+          size={isPreview ? 80 : 95}
+          style={{ bottom: isPreview ? -18 : -22, left: isPreview ? -18 : -22, transform: 'rotate(10deg)' }}
+        />
+        {/* Bottom-right heart */}
+        <HeartSvg
+          size={isPreview ? 95 : 110}
+          style={{ bottom: isPreview ? -22 : -26, right: isPreview ? -20 : -24, transform: 'rotate(-10deg)' }}
+        />
+        {/* Small solid blue heart */}
+        <HeartSvg
+          size={isPreview ? 22 : 26}
+          color={THEME.heartFill}
+          style={{ top: '22%', left: '8%' }}
+        />
+      </Box>
+
+      {/* Store Name Box */}
+      <Box
+        sx={{
+          bgcolor: THEME.storeBg,
           px: 2.5,
-          py: 0.5,
-          mb: 1,
+          py: 0.6,
+          borderRadius: '4px',
+          zIndex: 1,
+          mt: isPreview ? '55px' : '0.5in',
+          mb: 0,
+          boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
         }}
       >
         <Typography
           sx={{
-            fontFamily: '"Segoe UI", Arial, sans-serif',
-            fontWeight: 700,
-            fontSize: 16 * scale,
-            color: '#333',
+            fontWeight: 800,
+            fontSize: 15 * scale,
+            color: THEME.storeText,
             letterSpacing: 0.5,
+            fontFamily: '"Segoe UI", Arial, sans-serif',
           }}
         >
           {storeName || 'Store Name'}
@@ -62,121 +138,124 @@ const NoteCard = ({ name, storeName, messages, size }) => {
       {/* Main Content */}
       <Box
         sx={{
-          border: '2px solid #d0d0d0',
-          borderRadius: '12px',
-          p: 2.5,
           flex: 1,
-          width: '100%',
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'center',
           alignItems: 'center',
           textAlign: 'center',
-          bgcolor: '#f5f5f5',
-          mt: 1,
+          width: '100%',
+          px: isPreview ? 2.5 : '0.3in',
+          zIndex: 1,
         }}
       >
-        {/* Greeting */}
-        <Box sx={{ width: '100%', mb: 2 }}>
-          <Typography
-            component="span"
-            sx={{
-              fontFamily: '"Segoe UI", Arial, sans-serif',
-              fontSize: 15 * scale,
-              color: '#666',
-            }}
-          >
-            Hi{' '}
-          </Typography>
-          <Typography
-            component="span"
-            sx={{
-              fontFamily: '"Permanent Marker", "Comic Sans MS", cursive',
-              fontSize: 28 * scale,
-              fontWeight: 700,
-              color: '#c0392b',
-              textTransform: 'uppercase',
-            }}
-          >
-            {name || 'NAME'}
-          </Typography>
-          <Typography
-            component="span"
-            sx={{
-              fontFamily: '"Segoe UI", Arial, sans-serif',
-              fontSize: 15 * scale,
-              color: '#666',
-            }}
-          >
-            ,
-          </Typography>
-        </Box>
-
-        {/* Thank You Message */}
+        {/* Hi Name, */}
         <Typography
           sx={{
+            fontWeight: 700,
+            fontSize: 22 * scale,
+            color: THEME.textMedium,
+            letterSpacing: 3,
+            mb: 1,
             fontFamily: '"Segoe UI", Arial, sans-serif',
-            fontSize: 16 * scale,
-            color: '#444',
-            lineHeight: 1.6,
+          }}
+        >
+          Hi {name || 'NAME'},
+        </Typography>
+
+        {/* Thank you, with heart */}
+        <Box sx={{ mb: 2.5, display: 'flex', alignItems: 'baseline', justifyContent: 'center', flexWrap: 'wrap' }}>
+          <Typography
+            component="span"
+            sx={{
+              fontFamily: 'Georgia, "Times New Roman", serif',
+              fontSize: 32 * scale,
+              color: THEME.textDark,
+              fontWeight: 400,
+              lineHeight: 1.2,
+            }}
+          >
+            Thank
+          </Typography>
+          <Typography
+            component="span"
+            sx={{
+              fontFamily: '"Satisfy", "Dancing Script", cursive',
+              fontSize: 30 * scale,
+              color: THEME.textScript,
+              ml: 0.5,
+              lineHeight: 1.2,
+              position: 'relative',
+              top: '2px',
+            }}
+          >
+            you,
+          </Typography>
+          <Favorite sx={{ color: THEME.heartSmall, fontSize: 15 * scale, ml: 0.5 }} />
+        </Box>
+
+        {/* for ordering from us! */}
+        <Typography
+          sx={{
+            fontWeight: 700,
+            fontSize: 15 * scale,
+            color: THEME.textMedium,
+            lineHeight: 1.7,
             mb: 2.5,
+            fontFamily: '"Segoe UI", Arial, sans-serif',
           }}
         >
           {messages.thankYou}
         </Typography>
 
-        {/* Packed with care */}
-        <Box sx={{ textAlign: 'center', maxWidth: '80%' }}>
-          <Typography
-            component="span"
-            sx={{
-              fontFamily: '"Segoe UI", Arial, sans-serif',
-              fontSize: 15 * scale,
-              color: '#444',
-              lineHeight: 1.8,
-            }}
-          >
-            We packed it with care just
-          </Typography>
-          <br />
-          <Typography
-            component="span"
-            sx={{
-              fontFamily: '"Segoe UI", Arial, sans-serif',
-              fontSize: 15 * scale,
-              color: '#444',
-              lineHeight: 1.8,
-            }}
-          >
-            for you
-          </Typography>
-          <Favorite sx={{ color: '#e74c3c', fontSize: 18 * scale, verticalAlign: 'middle', ml: 0.5 }} />
-        </Box>
-
-        {/* Support email */}
+        {/* we packed it with LOVE just for you ! */}
         <Typography
           sx={{
+            fontWeight: 700,
+            fontSize: 15 * scale,
+            color: THEME.textMedium,
+            lineHeight: 1.7,
             fontFamily: '"Segoe UI", Arial, sans-serif',
-            fontSize: 10 * scale,
-            color: '#999',
-            mt: 1.5,
           }}
         >
-          support@shopperskart.shop
+          {messages.packed}
         </Typography>
       </Box>
+
+      {/* Support email at bottom */}
+      <Typography
+        sx={{
+          fontSize: 9 * scale,
+          color: '#999',
+          zIndex: 1,
+          mb: isPreview ? 1.5 : '0.15in',
+          fontFamily: '"Segoe UI", Arial, sans-serif',
+        }}
+      >
+        support@shopperskart.shop
+      </Typography>
     </Box>
   );
 };
 
 const PersonalizedNote = () => {
-  // Each entry: { id, value (name), store (store name) }
   const [names, setNames] = useState([{ id: 1, value: '', store: '' }]);
   const [defaultStore, setDefaultStore] = useState('');
+  const [selectedProduct, setSelectedProduct] = useState('');
   const [messages, setMessages] = useState({ ...NOTE_MESSAGES });
   const printRef = useRef();
 
-  // Fetch customer names with their store names from labels
+  // Load Satisfy font for script-style "you,"
+  useEffect(() => {
+    const link = document.createElement('link');
+    link.href = 'https://fonts.googleapis.com/css2?family=Satisfy&display=swap';
+    link.rel = 'stylesheet';
+    document.head.appendChild(link);
+    return () => {
+      if (document.head.contains(link)) document.head.removeChild(link);
+    };
+  }, []);
+
   const { data: notesData, refetch } = useQuery(
     'personalized-notes-data',
     () => axios.get('/api/labels/personalized-notes-data').then(res => res.data),
@@ -184,22 +263,28 @@ const PersonalizedNote = () => {
   );
 
   const availableStores = notesData?.stores || [];
-  const labelEntries = notesData?.entries || [];
+  const availableProducts = notesData?.products || [];
 
   const loadFromLabels = async () => {
-    // Always refetch fresh data when clicking "From Labels"
-    const { data: freshData } = await refetch();
-    const entries = freshData?.entries || [];
-    if (entries.length === 0) {
-      toast.error('No customer names found in uploaded labels. Re-upload labels to extract names.');
-      return;
+    try {
+      const params = selectedProduct ? `?product=${encodeURIComponent(selectedProduct)}` : '';
+      const { data: freshData } = await axios.get(`/api/labels/personalized-notes-data${params}`);
+      const entries = freshData?.entries || [];
+      if (entries.length === 0) {
+        toast.error(selectedProduct
+          ? `No customer names found for product "${selectedProduct}". Try a different product or clear the filter.`
+          : 'No customer names found in uploaded labels. Re-upload labels to extract names.');
+        return;
+      }
+      setNames(entries.map((entry, i) => ({
+        id: Date.now() + i,
+        value: entry.customer_name.split(' ')[0],
+        store: entry.store_name || ''
+      })));
+      toast.success(`Loaded ${entries.length} customer name(s)${selectedProduct ? ` for "${selectedProduct}"` : ' from labels'}`);
+    } catch (error) {
+      toast.error('Failed to load customer names');
     }
-    setNames(entries.map((entry, i) => ({
-      id: Date.now() + i,
-      value: entry.customer_name.split(' ')[0],
-      store: entry.store_name || ''
-    })));
-    toast.success(`Loaded ${entries.length} customer name(s) from labels`);
   };
 
   const getStoreName = (entry) => entry.store || defaultStore || '';
@@ -231,139 +316,36 @@ const PersonalizedNote = () => {
 
   const validNames = names.filter(n => n.value.trim());
 
-  const handlePrint = () => {
-    const printContent = document.getElementById('print-area');
-    if (!printContent) return;
+  // Draw a heart fully contained within card bounds for PDF
+  const drawPdfHeart = (pdf, cx, cy, size, r, g, b, clipX, clipY, clipW, clipH) => {
+    pdf.saveGraphicsState();
+    pdf.setFillColor(r, g, b);
+    const s = size;
 
-    const printWindow = window.open('', '_blank');
-    printWindow.document.write(`
-      <html>
-        <head>
-          <title>Personalized Notes</title>
-          <link href="https://fonts.googleapis.com/css2?family=Permanent+Marker&display=swap" rel="stylesheet">
-          <style>
-            * { margin: 0; padding: 0; box-sizing: border-box; }
-            body { font-family: 'Segoe UI', Arial, sans-serif; }
-            @page { size: A4; margin: 0; }
-            .notes-grid {
-              display: grid;
-              grid-template-columns: repeat(3, 2.5in);
-              gap: 0.15in;
-              padding: 0.2in 0.35in;
-              justify-content: center;
-            }
-            .note-card {
-              width: 2.5in;
-              height: 3.6in;
-              border: 1.5px solid #e0e0e0;
-              border-radius: 12px;
-              display: flex;
-              flex-direction: column;
-              align-items: center;
-              justify-content: space-between;
-              padding: 0.2in;
-              background: #fafafa;
-              page-break-inside: avoid;
-            }
-            .store-badge {
-              border: 1.5px solid #555;
-              border-radius: 6px;
-              padding: 2px 12px;
-              margin-bottom: 4px;
-            }
-            .store-name {
-              font-weight: 700;
-              font-size: 11px;
-              color: #333;
-              letter-spacing: 0.3px;
-            }
-            .content-box {
-              border: 1.5px solid #d0d0d0;
-              border-radius: 10px;
-              padding: 10px;
-              flex: 1;
-              width: 100%;
-              display: flex;
-              flex-direction: column;
-              justify-content: center;
-              align-items: center;
-              text-align: center;
-              background: #f5f5f5;
-              margin-top: 4px;
-            }
-            .greeting { margin-bottom: 8px; }
-            .greeting-text { font-size: 11px; color: #666; }
-            .customer-name {
-              font-family: 'Permanent Marker', cursive;
-              font-size: 20px;
-              font-weight: 700;
-              color: #c0392b;
-              text-transform: uppercase;
-            }
-            .thank-msg {
-              font-size: 11px;
-              color: #444;
-              line-height: 1.5;
-              margin-bottom: 10px;
-            }
-            .packed-msg {
-              font-size: 11px;
-              color: #444;
-              line-height: 1.5;
-            }
-            .heart {
-              color: #e74c3c;
-              font-size: 13px;
-              vertical-align: middle;
-              margin-left: 2px;
-            }
-            .support-email {
-              font-size: 8px;
-              color: #999;
-              margin-top: 8px;
-            }
-            @media print {
-              body { margin: 0; }
-              .notes-grid { padding: 0.2in 0.35in; gap: 0.15in; }
-              .note-card { break-inside: avoid; }
-            }
-          </style>
-        </head>
-        <body>
-          <div class="notes-grid">
-            ${validNames.map(n => `
-              <div class="note-card">
-                <div class="store-badge">
-                  <span class="store-name">${getStoreName(n) || 'Store Name'}</span>
-                </div>
-                <div class="content-box">
-                  <div class="greeting">
-                    <span class="greeting-text">Hi </span>
-                    <span class="customer-name">${n.value}</span>
-                    <span class="greeting-text">,</span>
-                  </div>
-                  <div class="thank-msg">${messages.thankYou}</div>
-                  <div class="packed-msg">
-                    We packed it with care just<br/>for you <span class="heart">&#10084;</span>
-                  </div>
-                  <div class="support-email">support@shopperskart.shop</div>
-                </div>
-              </div>
-            `).join('')}
-          </div>
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
-    setTimeout(() => {
-      printWindow.print();
-    }, 500);
+    // Only draw parts that are within the clip bounds
+    const drawEllipseClipped = (ex, ey, rx, ry) => {
+      // Simple check: only draw if center is within reasonable bounds
+      if (ex + rx >= clipX && ex - rx <= clipX + clipW &&
+          ey + ry >= clipY && ey - ry <= clipY + clipH) {
+        pdf.ellipse(ex, ey, rx, ry, 'F');
+      }
+    };
+
+    drawEllipseClipped(cx - s * 0.28, cy - s * 0.18, s * 0.32, s * 0.26);
+    drawEllipseClipped(cx + s * 0.28, cy - s * 0.18, s * 0.32, s * 0.26);
+
+    // Triangle
+    const tx1 = cx - s * 0.58, ty1 = cy - s * 0.05;
+    const tx2 = cx + s * 0.58, ty2 = cy - s * 0.05;
+    const tx3 = cx, ty3 = cy + s * 0.52;
+    pdf.triangle(tx1, ty1, tx2, ty2, tx3, ty3, 'F');
+
+    pdf.restoreGraphicsState();
   };
 
   const handleDownloadPDF = () => {
     if (validNames.length === 0) return;
 
-    // A4: 8.27in x 11.69in, 3x3 grid = 9 notes per page
     const pdf = new jsPDF('p', 'in', 'a4');
     const pageW = 8.27;
     const pageH = 11.69;
@@ -389,106 +371,106 @@ const PersonalizedNote = () => {
       const x = marginX + col * (cardW + gapX);
       const y = marginY + row * (cardH + gapY);
       const cardStore = getStoreName(n) || 'Store Name';
+      const centerX = x + cardW / 2;
+
+      // Card background - cream
+      pdf.setFillColor(251, 247, 242);
+      pdf.roundedRect(x, y, cardW, cardH, 0.08, 0.08, 'F');
+
+      // Hearts INSIDE card bounds (positioned at corners but contained)
+      // Top-left: heart center just inside top-left corner
+      drawPdfHeart(pdf, x + 0.25, y + 0.28, 0.42, 197, 222, 242, x, y, cardW, cardH);
+      // Top-right: heart center just inside top-right corner
+      drawPdfHeart(pdf, x + cardW - 0.22, y + 0.3, 0.45, 197, 222, 242, x, y, cardW, cardH);
+      // Bottom-left
+      drawPdfHeart(pdf, x + 0.22, y + cardH - 0.25, 0.32, 197, 222, 242, x, y, cardW, cardH);
+      // Bottom-right
+      drawPdfHeart(pdf, x + cardW - 0.2, y + cardH - 0.22, 0.38, 197, 222, 242, x, y, cardW, cardH);
+      // Small solid blue heart
+      drawPdfHeart(pdf, x + 0.26, y + cardH * 0.24, 0.08, 92, 184, 245, x, y, cardW, cardH);
+
+      // Redraw card background edges to clean up any heart overflow
+      // Top edge cover
+      pdf.setFillColor(255, 255, 255);
+      pdf.rect(x - 0.02, y - 0.04, cardW + 0.04, 0.04, 'F');
+      // Bottom edge cover
+      pdf.rect(x - 0.02, y + cardH, cardW + 0.04, 0.04, 'F');
+      // Left edge cover
+      pdf.rect(x - 0.04, y - 0.02, 0.04, cardH + 0.04, 'F');
+      // Right edge cover
+      pdf.rect(x + cardW, y - 0.02, 0.04, cardH + 0.04, 'F');
+
+      // Store name white box
+      const storeW = Math.min(1.5, cardW * 0.65);
+      const storeH = 0.26;
+      const storeX = centerX - storeW / 2;
+      const storeY = y + 0.38;
+      pdf.setFillColor(255, 255, 255);
+      pdf.roundedRect(storeX, storeY, storeW, storeH, 0.03, 0.03, 'F');
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(8);
+      pdf.setTextColor(26, 26, 26);
+      pdf.text(cardStore, centerX, storeY + 0.17, { align: 'center' });
+
+      // Content area - centered text
+      // "Hi NAME," - positioned at ~38% from top, medium blue
+      const hiY = y + cardH * 0.38;
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(13);
+      pdf.setTextColor(21, 101, 192); // #1565C0 medium blue
+      pdf.text(`Hi ${n.value},`, centerX, hiY, { align: 'center' });
+
+      // "Thank" (serif, dark) + "you," (italic, indigo) - centered
+      const thankY = hiY + 0.38;
+      pdf.setFont('times', 'normal');
+      pdf.setFontSize(20);
+      pdf.setTextColor(13, 71, 161); // #0D47A1 dark blue
+      const thankW = pdf.getTextWidth('Thank');
+      pdf.setFont('times', 'italic');
+      pdf.setFontSize(17);
+      pdf.setTextColor(57, 73, 171); // #3949AB indigo
+      const youW = pdf.getTextWidth('you,');
+
+      // Calculate total width to center "Thank you, <3"
+      const totalThankW = thankW + 0.06 + youW + 0.14;
+      const thankStartX = centerX - totalThankW / 2;
+
+      pdf.setFont('times', 'normal');
+      pdf.setFontSize(20);
+      pdf.setTextColor(13, 71, 161); // #0D47A1
+      pdf.text('Thank', thankStartX, thankY);
+
+      pdf.setFont('times', 'italic');
+      pdf.setFontSize(17);
+      pdf.setTextColor(57, 73, 171); // #3949AB
+      pdf.text('you,', thankStartX + thankW + 0.06, thankY + 0.02);
+
+      // Small heart after "you," - light grey
+      drawPdfHeart(pdf, thankStartX + thankW + 0.06 + youW + 0.08, thankY - 0.03, 0.06, 192, 202, 216, x, y, cardW, cardH);
+
+      // "for ordering from us!" - centered, medium blue
+      const msg1Y = thankY + 0.4;
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(9);
+      pdf.setTextColor(21, 101, 192); // #1565C0
+      const thankLines = pdf.splitTextToSize(messages.thankYou, cardW - 0.4);
+      pdf.text(thankLines, centerX, msg1Y, { align: 'center' });
+
+      // "we packed it with LOVE just for you !" - centered, medium blue
+      const msg2Y = msg1Y + thankLines.length * 0.16 + 0.22;
+      const packedLines = pdf.splitTextToSize(messages.packed, cardW - 0.4);
+      pdf.text(packedLines, centerX, msg2Y, { align: 'center' });
+
+      // Support email at bottom
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(5.5);
+      pdf.setTextColor(153, 153, 153);
+      pdf.text('support@shopperskart.shop', centerX, y + cardH - 0.12, { align: 'center' });
 
       // Card border
-      pdf.setDrawColor(200);
-      pdf.setLineWidth(0.015);
-      pdf.roundedRect(x, y, cardW, cardH, 0.1, 0.1);
-
-      // Store badge
-      const badgeW = Math.min(1.4, cardW * 0.6);
-      const badgeH = 0.28;
-      const badgeX = x + (cardW - badgeW) / 2;
-      const badgeY = y + 0.18;
-      pdf.setDrawColor(85);
-      pdf.setLineWidth(0.015);
-      pdf.roundedRect(badgeX, badgeY, badgeW, badgeH, 0.06, 0.06);
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(9);
-      pdf.setTextColor(51);
-      pdf.text(cardStore, x + cardW / 2, badgeY + 0.19, { align: 'center' });
-
-      // Inner content box
-      const innerX = x + 0.15;
-      const innerY = badgeY + badgeH + 0.12;
-      const innerW = cardW - 0.3;
-      const innerH = cardH - (innerY - y) - 0.15;
-      pdf.setDrawColor(190);
-      pdf.setFillColor(245, 245, 245);
-      pdf.roundedRect(innerX, innerY, innerW, innerH, 0.08, 0.08, 'FD');
-
-      // Greeting
-      const centerX = innerX + innerW / 2;
-      let textY = innerY + innerH * 0.28;
-
-      pdf.setFont('helvetica', 'normal');
-      pdf.setFontSize(9);
-      pdf.setTextColor(102);
-      const hiWidth = pdf.getTextWidth('Hi ');
-      const nameText = n.value.toUpperCase();
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(15);
-      pdf.setTextColor(192, 57, 43);
-      const nameWidth = pdf.getTextWidth(nameText);
-      pdf.setFont('helvetica', 'normal');
-      pdf.setFontSize(9);
-      pdf.setTextColor(102);
-      const commaWidth = pdf.getTextWidth(',');
-
-      const totalW = hiWidth + nameWidth + commaWidth;
-      const startX = centerX - totalW / 2;
-
-      pdf.text('Hi ', startX, textY);
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(15);
-      pdf.setTextColor(192, 57, 43);
-      pdf.text(nameText, startX + hiWidth, textY);
-      pdf.setFont('helvetica', 'normal');
-      pdf.setFontSize(9);
-      pdf.setTextColor(102);
-      pdf.text(',', startX + hiWidth + nameWidth, textY);
-
-      // Thank you message
-      textY += 0.4;
-      pdf.setFont('helvetica', 'normal');
-      pdf.setFontSize(9);
-      pdf.setTextColor(68);
-      const thankLines = pdf.splitTextToSize(messages.thankYou, innerW - 0.3);
-      pdf.text(thankLines, centerX, textY, { align: 'center' });
-
-      // Packed message - line 1: "We packed it with care just"
-      textY += thankLines.length * 0.18 + 0.3;
-      pdf.setFontSize(9);
-      pdf.setTextColor(68);
-      pdf.text('We packed it with care just', centerX, textY, { align: 'center' });
-
-      // Line 2: "for you" + heart
-      textY += 0.18;
-      const forYouText = 'for you';
-      const forYouWidth = pdf.getTextWidth(forYouText);
-      const forYouStartX = centerX - (forYouWidth + 0.15) / 2;
-      pdf.text(forYouText, forYouStartX, textY);
-
-      // Draw heart shape after "for you"
-      const heartX = forYouStartX + forYouWidth + 0.1;
-      const heartY = textY - 0.06;
-      const hs = 0.07;
-      pdf.setFillColor(231, 76, 60);
-      pdf.ellipse(heartX - hs * 0.5, heartY - hs * 0.3, hs * 0.55, hs * 0.45, 'F');
-      pdf.ellipse(heartX + hs * 0.5, heartY - hs * 0.3, hs * 0.55, hs * 0.45, 'F');
-      pdf.triangle(
-        heartX - hs * 1.05, heartY - hs * 0.15,
-        heartX + hs * 1.05, heartY - hs * 0.15,
-        heartX, heartY + hs * 1.0,
-        'F'
-      );
-
-      // Support email
-      textY += 0.25;
-      pdf.setFont('helvetica', 'normal');
-      pdf.setFontSize(6);
-      pdf.setTextColor(153);
-      pdf.text('support@shopperskart.shop', centerX, textY, { align: 'center' });
+      pdf.setDrawColor(230, 230, 230);
+      pdf.setLineWidth(0.008);
+      pdf.roundedRect(x, y, cardW, cardH, 0.08, 0.08);
     });
 
     pdf.save('personalized-notes.pdf');
@@ -498,24 +480,14 @@ const PersonalizedNote = () => {
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h4">Personalized Notes</Typography>
-        <Stack direction="row" spacing={1}>
-          <Button
-            variant="outlined"
-            startIcon={<Print />}
-            onClick={handlePrint}
-            disabled={validNames.length === 0}
-          >
-            Print
-          </Button>
-          <Button
-            variant="contained"
-            startIcon={<Download />}
-            onClick={handleDownloadPDF}
-            disabled={validNames.length === 0}
-          >
-            Download PDF
-          </Button>
-        </Stack>
+        <Button
+          variant="contained"
+          startIcon={<Download />}
+          onClick={handleDownloadPDF}
+          disabled={validNames.length === 0}
+        >
+          Download PDF
+        </Button>
       </Box>
 
       <Grid container spacing={3}>
@@ -524,7 +496,6 @@ const PersonalizedNote = () => {
           <Paper sx={{ p: 3 }}>
             <Typography variant="h6" gutterBottom>Settings</Typography>
 
-            {/* Default Store Name (for manually added names) */}
             <Typography variant="subtitle2" sx={{ mb: 1, mt: 1 }}>Default Store Name</Typography>
             {availableStores.length > 0 && (
               <FormControl fullWidth size="small" sx={{ mb: 1 }}>
@@ -545,7 +516,7 @@ const PersonalizedNote = () => {
               fullWidth
               size="small"
               label="Or type store name"
-              placeholder="e.g. ZenGoods"
+              placeholder="e.g. ShoppersKart"
               value={defaultStore}
               onChange={(e) => setDefaultStore(e.target.value)}
               sx={{ mb: 1 }}
@@ -556,7 +527,26 @@ const PersonalizedNote = () => {
 
             <Divider sx={{ my: 2 }} />
 
-            {/* Messages */}
+            <Typography variant="subtitle2" sx={{ mb: 1 }}>Product</Typography>
+            <FormControl fullWidth size="small" sx={{ mb: 1 }}>
+              <InputLabel>Select product</InputLabel>
+              <Select
+                value={selectedProduct}
+                label="Select product"
+                onChange={(e) => setSelectedProduct(e.target.value)}
+              >
+                <MenuItem value="">All Products</MenuItem>
+                {availableProducts.map(product => (
+                  <MenuItem key={product} value={product}>{product}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <Typography variant="caption" color="text.secondary">
+              Filter customers by product when loading from labels.
+            </Typography>
+
+            <Divider sx={{ my: 2 }} />
+
             <Typography variant="subtitle2" sx={{ mb: 1 }}>Messages</Typography>
             <TextField
               fullWidth
@@ -587,7 +577,6 @@ const PersonalizedNote = () => {
 
             <Divider sx={{ my: 2 }} />
 
-            {/* Customer Names */}
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
               <Typography variant="subtitle2">
                 Customer Names
@@ -605,7 +594,6 @@ const PersonalizedNote = () => {
               </Stack>
             </Box>
 
-            {/* Bulk paste */}
             <TextField
               fullWidth
               size="small"
@@ -681,8 +669,8 @@ const PersonalizedNote = () => {
                 <Typography variant="body1">Enter customer names to see the preview</Typography>
                 <Box sx={{ mt: 3, display: 'flex', justifyContent: 'center' }}>
                   <NoteCard
-                    name="THOMAS"
-                    storeName="ZenGoods"
+                    name="Manjunath"
+                    storeName="ShoppersKart"
                     messages={messages}
                     size="preview"
                   />

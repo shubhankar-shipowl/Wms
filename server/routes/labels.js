@@ -206,18 +206,28 @@ router.get('/couriers', authenticateToken, async (req, res) => {
 
 /**
  * GET /personalized-notes-data
- * Returns unique customer names and store names for personalized note generation
+ * Returns unique customer names, store names, and product names for personalized note generation
+ * Optionally filter by product_name query param
  */
 router.get('/personalized-notes-data', authenticateToken, async (req, res) => {
   try {
-    // Return each unique customer+store pair (one note per label, not per product)
-    const [entries] = await pool.execute(`
+    const { product } = req.query;
+
+    let entryQuery = `
       SELECT customer_name, store_name, MAX(upload_date) as upload_date
       FROM labels
       WHERE customer_name IS NOT NULL AND customer_name != ''
-      GROUP BY customer_name, store_name
-      ORDER BY upload_date DESC
-    `);
+    `;
+    const entryParams = [];
+
+    if (product) {
+      entryQuery += ` AND product_name = ?`;
+      entryParams.push(product);
+    }
+
+    entryQuery += ` GROUP BY customer_name, store_name ORDER BY upload_date DESC`;
+
+    const [entries] = await pool.execute(entryQuery, entryParams);
 
     const [stores] = await pool.execute(`
       SELECT DISTINCT store_name
@@ -226,10 +236,18 @@ router.get('/personalized-notes-data', authenticateToken, async (req, res) => {
       ORDER BY store_name ASC
     `);
 
+    const [products] = await pool.execute(`
+      SELECT DISTINCT product_name
+      FROM labels
+      WHERE product_name IS NOT NULL AND product_name != ''
+      ORDER BY product_name ASC
+    `);
+
     res.json({
       success: true,
       entries: entries.map(r => ({ customer_name: r.customer_name, store_name: r.store_name })),
-      stores: stores.map(r => r.store_name)
+      stores: stores.map(r => r.store_name),
+      products: products.map(r => r.product_name)
     });
   } catch (error) {
     console.error('Error fetching personalized notes data:', error);
