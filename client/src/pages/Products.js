@@ -42,6 +42,7 @@ import { useQuery, useMutation, useQueryClient } from 'react-query';
 import { useNavigate } from 'react-router-dom';
 import { useForm, Controller } from 'react-hook-form';
 import axios from 'axios';
+import jsPDF from 'jspdf';
 import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
 import LoadingSpinner from '../components/Common/LoadingSpinner';
@@ -255,6 +256,7 @@ const ProductCard = ({
   onEdit,
   onDelete,
   onView,
+  onGeneratePoster,
   isAdmin,
   canEdit,
 }) => {
@@ -474,6 +476,18 @@ const ProductCard = ({
           }}
         >
           <Visibility />
+        </IconButton>
+
+        <IconButton
+          size="small"
+          onClick={() => onGeneratePoster(product)}
+          title="Download Poster"
+          sx={{
+            color: 'info.main',
+            '&:hover': { backgroundColor: 'info.light', color: 'white' },
+          }}
+        >
+          <Download />
         </IconButton>
 
         {canEdit && (
@@ -1528,6 +1542,109 @@ const Products = () => {
     }
   };
 
+  const handleGeneratePoster = (product) => {
+    const getFirstImageUrl = () => {
+      if (!product.images || product.images.length === 0) return null;
+      const img = product.images[0];
+      if (typeof img === 'string') return `/api/products/images/${img}`;
+      if (img && img.id) return `/api/products/images/${img.id}`;
+      return null;
+    };
+
+    const imageUrl = getFirstImageUrl();
+
+    const generatePdf = (productImg) => {
+      // 1/4 of A4 landscape: 148.5mm x 105mm
+      const cardW = 148.5;
+      const cardH = 105;
+      const pdf = new jsPDF({ orientation: 'l', unit: 'mm', format: [cardW, cardH] });
+      const triSize = 50;
+      const borderMargin = 5;
+      const cx = cardW / 2;
+
+      // White background
+      pdf.setFillColor(255, 255, 255);
+      pdf.rect(0, 0, cardW, cardH, 'F');
+
+      // Blue triangles: top-left and bottom-right (extend to card edges)
+      pdf.setFillColor(43, 87, 151);
+      pdf.triangle(0, 0, triSize, 0, 0, triSize, 'F');
+      pdf.triangle(cardW, cardH, cardW - triSize, cardH, cardW, cardH - triSize, 'F');
+
+      // Gold triangles: top-right and bottom-left (extend to card edges)
+      pdf.setFillColor(232, 168, 56);
+      pdf.triangle(cardW, 0, cardW - triSize, 0, cardW, triSize, 'F');
+      pdf.triangle(0, cardH, triSize, cardH, 0, cardH - triSize, 'F');
+
+      // White inner frame overlaying triangles - creates diagonal stripe band effect at corners
+      pdf.setFillColor(255, 255, 255);
+      pdf.rect(borderMargin, borderMargin, cardW - 2 * borderMargin, cardH - 2 * borderMargin, 'F');
+
+      // Product Name - large and bold, centered near top
+      pdf.setFont('helvetica', 'bold');
+      pdf.setTextColor(0, 0, 0);
+      pdf.setFontSize(28);
+      const nameLines = pdf.splitTextToSize(product.name, cardW - 20);
+      const nameLineHeight = 10;
+      const totalNameHeight = nameLines.length * nameLineHeight;
+      const nameStartY = 16;
+      nameLines.forEach((line, i) => {
+        pdf.text(line, cx, nameStartY + i * nameLineHeight, { align: 'center' });
+      });
+
+      // SKU - bold and prominent
+      const skuY = nameStartY + totalNameHeight + 5;
+      pdf.setFontSize(16);
+      pdf.setFont('helvetica', 'bold');
+      pdf.text(product.sku, cx, skuY, { align: 'center' });
+
+      // Product image - centered in remaining space
+      if (productImg) {
+        const canvas = document.createElement('canvas');
+        canvas.width = productImg.naturalWidth;
+        canvas.height = productImg.naturalHeight;
+        canvas.getContext('2d').drawImage(productImg, 0, 0);
+        const pngData = canvas.toDataURL('image/png');
+
+        const imgRatio = productImg.naturalWidth / productImg.naturalHeight;
+        const imgAreaTop = skuY + 4;
+        const maxImgH = cardH - imgAreaTop - 8;
+        const maxImgW = cardW - 30;
+        let imgW, imgH;
+        if (imgRatio > maxImgW / maxImgH) {
+          imgW = maxImgW;
+          imgH = maxImgW / imgRatio;
+        } else {
+          imgH = maxImgH;
+          imgW = maxImgH * imgRatio;
+        }
+        const imgX = cx - imgW / 2;
+        const imgY = imgAreaTop + (maxImgH - imgH) / 2;
+        pdf.addImage(pngData, 'PNG', imgX, imgY, imgW, imgH);
+      }
+
+      pdf.save(`${product.name}_${product.sku}_poster.pdf`);
+    };
+
+    if (imageUrl) {
+      toast.loading('Generating poster...', { id: 'poster-gen' });
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        generatePdf(img);
+        toast.success('Poster downloaded!', { id: 'poster-gen' });
+      };
+      img.onerror = () => {
+        generatePdf(null);
+        toast.success('Poster downloaded (without image)', { id: 'poster-gen' });
+      };
+      img.src = imageUrl;
+    } else {
+      generatePdf(null);
+      toast.success('Poster downloaded!');
+    }
+  };
+
   const handleExportCSV = async () => {
     try {
       const params = {};
@@ -1994,6 +2111,7 @@ const Products = () => {
               onEdit={handleEdit}
               onDelete={handleDelete}
               onView={handleView}
+              onGeneratePoster={handleGeneratePoster}
               isAdmin={isAdmin}
               canEdit={canEdit}
             />

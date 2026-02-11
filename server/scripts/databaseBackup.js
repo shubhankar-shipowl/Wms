@@ -69,16 +69,34 @@ async function backupDatabase() {
         if (fs.existsSync(backupFilePath)) {
           const stats = fs.statSync(backupFilePath);
           if (stats.size > 0) {
-            console.log(`[BACKUP] Backup created successfully: ${backupFileName} (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
-            
+            const originalSize = stats.size;
+            console.log(`[BACKUP] SQL dump created: ${backupFileName} (${(originalSize / 1024 / 1024).toFixed(2)} MB)`);
+
+            // Compress the backup using gzip
+            console.log(`[BACKUP] Compressing backup...`);
+            let finalFilePath = backupFilePath;
+            let finalFileName = backupFileName;
+            try {
+              finalFilePath = await compressBackup(backupFilePath);
+              finalFileName = path.basename(finalFilePath);
+              const compressedStats = fs.statSync(finalFilePath);
+              const savedPercent = ((1 - compressedStats.size / originalSize) * 100).toFixed(1);
+              console.log(`[BACKUP] ✓ Compressed: ${finalFileName} (${(compressedStats.size / 1024 / 1024).toFixed(2)} MB, ${savedPercent}% smaller)`);
+            } catch (compressError) {
+              console.error(`[BACKUP] ✗ Compression failed, using uncompressed backup:`, compressError.message);
+              // Fall back to uncompressed file
+              finalFilePath = backupFilePath;
+              finalFileName = backupFileName;
+            }
+
             // Upload to Mega cloud storage
             console.log(`[BACKUP] Uploading backup to Mega...`);
-            const megaResult = await uploadToMega(backupFilePath, 'Cloud drive/app-backup/wms');
-            
+            const megaResult = await uploadToMega(finalFilePath, 'Cloud drive/app-backup/wms');
+
             if (megaResult.success) {
               console.log(`[BACKUP] ✓ Backup uploaded to Mega successfully`);
               console.log(`[BACKUP] Mega URL: ${megaResult.url}`);
-              
+
               // Cleanup old backups from Mega (keep last 30)
               console.log(`[BACKUP] Cleaning up old backups from Mega...`);
               const cleanupResult = await cleanupOldMegaFiles('Cloud drive/app-backup/wms', 30);
@@ -89,12 +107,13 @@ async function backupDatabase() {
               console.error(`[BACKUP] ✗ Mega upload failed: ${megaResult.error}`);
               // Still return success for local backup even if Mega upload fails
             }
-            
+
+            const finalStats = fs.statSync(finalFilePath);
             resolve({
               success: true,
-              filePath: backupFilePath,
-              fileName: backupFileName,
-              size: stats.size,
+              filePath: finalFilePath,
+              fileName: finalFileName,
+              size: finalStats.size,
               megaUpload: megaResult.success,
               megaUrl: megaResult.url || null,
               megaError: megaResult.error || null
@@ -143,7 +162,7 @@ async function cleanupOldBackups(daysToKeep = 30) {
     let totalSizeFreed = 0;
 
     for (const file of files) {
-      if (!file.endsWith('.sql')) {
+      if (!file.endsWith('.sql') && !file.endsWith('.sql.gz')) {
         continue;
       }
 

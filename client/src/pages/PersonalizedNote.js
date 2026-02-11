@@ -4,7 +4,7 @@ import {
   FormControl, InputLabel, Select, MenuItem, IconButton,
   Divider, Chip
 } from '@mui/material';
-import { Download, Add, Delete, Favorite, CloudUpload, Close } from '@mui/icons-material';
+import { Download, Add, Delete, Favorite, CloudUpload, Close, Refresh } from '@mui/icons-material';
 import { useQuery } from 'react-query';
 import axios from 'axios';
 import jsPDF from 'jspdf';
@@ -465,143 +465,154 @@ const PersonalizedNote = () => {
   };
 
   const handleDownloadPDF = () => {
-    if (validNames.length === 0) return;
+    if (validNames.length === 0) {
+      toast.error('No customer names to generate notes. Add names or load from labels.');
+      return;
+    }
 
-    // Accepts a map of { storeName: Image } for per-store logos
+    toast.loading('Generating personalized notes...', { id: 'notes-gen' });
+
+    // Accepts a map of { storeName: { dataUrl, width, height } } for per-store logos
     const generatePdf = (logoImgMap) => {
-      const pdf = new jsPDF('p', 'in', 'a4');
-      const pageW = 8.27;
-      const pageH = 11.69;
-      const cols = 3;
-      const rows = 3;
-      const perPage = cols * rows;
-      const marginX = 0.35;
-      const marginY = 0.2;
-      const gapX = 0.15;
-      const gapY = 0.15;
-      const cardW = (pageW - 2 * marginX - (cols - 1) * gapX) / cols;
-      const cardH = (pageH - 2 * marginY - (rows - 1) * gapY) / rows;
+      try {
+        const pdf = new jsPDF('p', 'in', 'a4');
+        const pageW = 8.27;
+        const pageH = 11.69;
+        const cols = 3;
+        const rows = 3;
+        const perPage = cols * rows;
+        const marginX = 0.35;
+        const marginY = 0.2;
+        const gapX = 0.15;
+        const gapY = 0.15;
+        const cardW = (pageW - 2 * marginX - (cols - 1) * gapX) / cols;
+        const cardH = (pageH - 2 * marginY - (rows - 1) * gapY) / rows;
 
-      validNames.forEach((n, idx) => {
-        const posOnPage = idx % perPage;
-        const col = posOnPage % cols;
-        const row = Math.floor(posOnPage / cols);
+        validNames.forEach((n, idx) => {
+          const posOnPage = idx % perPage;
+          const col = posOnPage % cols;
+          const row = Math.floor(posOnPage / cols);
 
-        if (idx > 0 && posOnPage === 0) {
-          pdf.addPage();
-        }
+          if (idx > 0 && posOnPage === 0) {
+            pdf.addPage();
+          }
 
-        const x = marginX + col * (cardW + gapX);
-        const y = marginY + row * (cardH + gapY);
-        const cardStore = getStoreName(n) || 'Store Name';
-        const centerX = x + cardW / 2;
+          const x = marginX + col * (cardW + gapX);
+          const y = marginY + row * (cardH + gapY);
+          const cardStore = getStoreName(n) || 'Store Name';
+          const centerX = x + cardW / 2;
 
-        // Card background - cream
-        pdf.setFillColor(251, 247, 242);
-        pdf.roundedRect(x, y, cardW, cardH, 0.08, 0.08, 'F');
+          // Card background - cream
+          pdf.setFillColor(251, 247, 242);
+          pdf.roundedRect(x, y, cardW, cardH, 0.08, 0.08, 'F');
 
-        // Hearts INSIDE card bounds (positioned at corners but contained)
-        drawPdfHeart(pdf, x + 0.25, y + 0.28, 0.42, 197, 222, 242, x, y, cardW, cardH);
-        drawPdfHeart(pdf, x + cardW - 0.22, y + 0.3, 0.45, 197, 222, 242, x, y, cardW, cardH);
-        drawPdfHeart(pdf, x + 0.22, y + cardH - 0.25, 0.32, 197, 222, 242, x, y, cardW, cardH);
-        drawPdfHeart(pdf, x + cardW - 0.2, y + cardH - 0.22, 0.38, 197, 222, 242, x, y, cardW, cardH);
-        drawPdfHeart(pdf, x + 0.26, y + cardH * 0.24, 0.08, 92, 184, 245, x, y, cardW, cardH);
+          // Hearts INSIDE card bounds (positioned at corners but contained)
+          drawPdfHeart(pdf, x + 0.25, y + 0.28, 0.42, 197, 222, 242, x, y, cardW, cardH);
+          drawPdfHeart(pdf, x + cardW - 0.22, y + 0.3, 0.45, 197, 222, 242, x, y, cardW, cardH);
+          drawPdfHeart(pdf, x + 0.22, y + cardH - 0.25, 0.32, 197, 222, 242, x, y, cardW, cardH);
+          drawPdfHeart(pdf, x + cardW - 0.2, y + cardH - 0.22, 0.38, 197, 222, 242, x, y, cardW, cardH);
+          drawPdfHeart(pdf, x + 0.26, y + cardH * 0.24, 0.08, 92, 184, 245, x, y, cardW, cardH);
 
-        // Redraw card background edges to clean up any heart overflow
-        pdf.setFillColor(255, 255, 255);
-        pdf.rect(x - 0.02, y - 0.04, cardW + 0.04, 0.04, 'F');
-        pdf.rect(x - 0.02, y + cardH, cardW + 0.04, 0.04, 'F');
-        pdf.rect(x - 0.04, y - 0.02, 0.04, cardH + 0.04, 'F');
-        pdf.rect(x + cardW, y - 0.02, 0.04, cardH + 0.04, 'F');
-
-        // Store logo or store name
-        const logoImg = logoImgMap[cardStore];
-        if (logoImg) {
-          const imgRatio = logoImg.naturalWidth / logoImg.naturalHeight;
-          const logoH = 0.4;
-          const logoW = Math.min(logoH * imgRatio, cardW * 0.65);
-          const logoX = centerX - logoW / 2;
-          const logoY = y + 0.3;
-          const alias = 'logo-' + cardStore.replace(/[^a-zA-Z0-9]/g, '_');
-          pdf.addImage(logoImg, 'PNG', logoX, logoY, logoW, logoH, alias, 'FAST');
-        } else {
-          const storeW = Math.min(1.5, cardW * 0.65);
-          const storeH = 0.26;
-          const storeX = centerX - storeW / 2;
-          const storeY = y + 0.38;
+          // Redraw card background edges to clean up any heart overflow
           pdf.setFillColor(255, 255, 255);
-          pdf.roundedRect(storeX, storeY, storeW, storeH, 0.03, 0.03, 'F');
+          pdf.rect(x - 0.02, y - 0.04, cardW + 0.04, 0.04, 'F');
+          pdf.rect(x - 0.02, y + cardH, cardW + 0.04, 0.04, 'F');
+          pdf.rect(x - 0.04, y - 0.02, 0.04, cardH + 0.04, 'F');
+          pdf.rect(x + cardW, y - 0.02, 0.04, cardH + 0.04, 'F');
+
+          // Store logo or store name
+          const logoInfo = logoImgMap[cardStore];
+          if (logoInfo && logoInfo.dataUrl) {
+            const imgRatio = (logoInfo.width && logoInfo.height) ? logoInfo.width / logoInfo.height : 1;
+            const logoH = 0.4;
+            const logoW = Math.min(logoH * imgRatio, cardW * 0.65);
+            const logoX = centerX - logoW / 2;
+            const logoY = y + 0.3;
+            const alias = 'logo-' + cardStore.replace(/[^a-zA-Z0-9]/g, '_');
+            pdf.addImage(logoInfo.dataUrl, 'PNG', logoX, logoY, logoW, logoH, alias, 'FAST');
+          } else {
+            const storeW = Math.min(1.5, cardW * 0.65);
+            const storeH = 0.26;
+            const storeX = centerX - storeW / 2;
+            const storeY = y + 0.38;
+            pdf.setFillColor(255, 255, 255);
+            pdf.roundedRect(storeX, storeY, storeW, storeH, 0.03, 0.03, 'F');
+            pdf.setFont('helvetica', 'bold');
+            pdf.setFontSize(8);
+            pdf.setTextColor(26, 26, 26);
+            pdf.text(cardStore, centerX, storeY + 0.17, { align: 'center' });
+          }
+
+          // Content area - centered text
+          // "Hi NAME," - positioned at ~38% from top, medium blue
+          const hiY = y + cardH * 0.38;
           pdf.setFont('helvetica', 'bold');
-          pdf.setFontSize(8);
-          pdf.setTextColor(26, 26, 26);
-          pdf.text(cardStore, centerX, storeY + 0.17, { align: 'center' });
-        }
+          pdf.setFontSize(13);
+          pdf.setTextColor(21, 101, 192); // #1565C0 medium blue
+          pdf.text(`Hi ${n.value},`, centerX, hiY, { align: 'center' });
 
-      // Content area - centered text
-      // "Hi NAME," - positioned at ~38% from top, medium blue
-      const hiY = y + cardH * 0.38;
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(13);
-      pdf.setTextColor(21, 101, 192); // #1565C0 medium blue
-      pdf.text(`Hi ${n.value},`, centerX, hiY, { align: 'center' });
+          // "Thank" (serif, dark) + "you," (italic, indigo) - centered
+          const thankY = hiY + 0.38;
+          pdf.setFont('times', 'normal');
+          pdf.setFontSize(20);
+          pdf.setTextColor(13, 71, 161); // #0D47A1 dark blue
+          const thankW = pdf.getTextWidth('Thank');
+          pdf.setFont('times', 'italic');
+          pdf.setFontSize(17);
+          pdf.setTextColor(57, 73, 171); // #3949AB indigo
+          const youW = pdf.getTextWidth('you,');
 
-      // "Thank" (serif, dark) + "you," (italic, indigo) - centered
-      const thankY = hiY + 0.38;
-      pdf.setFont('times', 'normal');
-      pdf.setFontSize(20);
-      pdf.setTextColor(13, 71, 161); // #0D47A1 dark blue
-      const thankW = pdf.getTextWidth('Thank');
-      pdf.setFont('times', 'italic');
-      pdf.setFontSize(17);
-      pdf.setTextColor(57, 73, 171); // #3949AB indigo
-      const youW = pdf.getTextWidth('you,');
+          // Calculate total width to center "Thank you, <3"
+          const totalThankW = thankW + 0.06 + youW + 0.14;
+          const thankStartX = centerX - totalThankW / 2;
 
-      // Calculate total width to center "Thank you, <3"
-      const totalThankW = thankW + 0.06 + youW + 0.14;
-      const thankStartX = centerX - totalThankW / 2;
+          pdf.setFont('times', 'normal');
+          pdf.setFontSize(20);
+          pdf.setTextColor(13, 71, 161); // #0D47A1
+          pdf.text('Thank', thankStartX, thankY);
 
-      pdf.setFont('times', 'normal');
-      pdf.setFontSize(20);
-      pdf.setTextColor(13, 71, 161); // #0D47A1
-      pdf.text('Thank', thankStartX, thankY);
+          pdf.setFont('times', 'italic');
+          pdf.setFontSize(17);
+          pdf.setTextColor(57, 73, 171); // #3949AB
+          pdf.text('you,', thankStartX + thankW + 0.06, thankY + 0.02);
 
-      pdf.setFont('times', 'italic');
-      pdf.setFontSize(17);
-      pdf.setTextColor(57, 73, 171); // #3949AB
-      pdf.text('you,', thankStartX + thankW + 0.06, thankY + 0.02);
+          // Small heart after "you," - light grey
+          drawPdfHeart(pdf, thankStartX + thankW + 0.06 + youW + 0.08, thankY - 0.03, 0.06, 192, 202, 216, x, y, cardW, cardH);
 
-      // Small heart after "you," - light grey
-      drawPdfHeart(pdf, thankStartX + thankW + 0.06 + youW + 0.08, thankY - 0.03, 0.06, 192, 202, 216, x, y, cardW, cardH);
+          // "for ordering from us!" - centered, medium blue
+          const msg1Y = thankY + 0.4;
+          pdf.setFont('helvetica', 'bold');
+          pdf.setFontSize(9);
+          pdf.setTextColor(21, 101, 192); // #1565C0
+          const thankLines = pdf.splitTextToSize(messages.thankYou, cardW - 0.4);
+          pdf.text(thankLines, centerX, msg1Y, { align: 'center' });
 
-      // "for ordering from us!" - centered, medium blue
-      const msg1Y = thankY + 0.4;
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(9);
-      pdf.setTextColor(21, 101, 192); // #1565C0
-      const thankLines = pdf.splitTextToSize(messages.thankYou, cardW - 0.4);
-      pdf.text(thankLines, centerX, msg1Y, { align: 'center' });
+          // "we packed it with LOVE just for you !" - centered, medium blue
+          const msg2Y = msg1Y + thankLines.length * 0.16 + 0.22;
+          const packedLines = pdf.splitTextToSize(messages.packed, cardW - 0.4);
+          pdf.text(packedLines, centerX, msg2Y, { align: 'center' });
 
-      // "we packed it with LOVE just for you !" - centered, medium blue
-      const msg2Y = msg1Y + thankLines.length * 0.16 + 0.22;
-      const packedLines = pdf.splitTextToSize(messages.packed, cardW - 0.4);
-      pdf.text(packedLines, centerX, msg2Y, { align: 'center' });
+          // Support email at bottom
+          pdf.setFont('helvetica', 'normal');
+          pdf.setFontSize(5.5);
+          pdf.setTextColor(153, 153, 153);
+          pdf.text('support@shopperskart.shop', centerX, y + cardH - 0.12, { align: 'center' });
 
-      // Support email at bottom
-      pdf.setFont('helvetica', 'normal');
-      pdf.setFontSize(5.5);
-      pdf.setTextColor(153, 153, 153);
-      pdf.text('support@shopperskart.shop', centerX, y + cardH - 0.12, { align: 'center' });
+          // Card border
+          pdf.setDrawColor(230, 230, 230);
+          pdf.setLineWidth(0.008);
+          pdf.roundedRect(x, y, cardW, cardH, 0.08, 0.08);
+        });
 
-      // Card border
-      pdf.setDrawColor(230, 230, 230);
-      pdf.setLineWidth(0.008);
-      pdf.roundedRect(x, y, cardW, cardH, 0.08, 0.08);
-      });
-
-      pdf.save('personalized-notes.pdf');
+        pdf.save('personalized-notes.pdf');
+        toast.success(`Downloaded ${validNames.length} personalized note(s)!`, { id: 'notes-gen' });
+      } catch (error) {
+        console.error('PDF generation failed:', error);
+        toast.error('Failed to generate PDF. Please try again.', { id: 'notes-gen' });
+      }
     };
 
-    // Preload all store logos, convert to PNG via canvas for reliable jsPDF embedding
+    // Preload all store logos, convert to PNG data URLs for reliable jsPDF embedding
     const storeNames = Object.keys(storeLogos);
     if (storeNames.length > 0) {
       const logoImgMap = {};
@@ -614,16 +625,22 @@ const PersonalizedNote = () => {
       storeNames.forEach(storeName => {
         const img = new Image();
         img.onload = () => {
-          const canvas = document.createElement('canvas');
-          canvas.width = img.naturalWidth;
-          canvas.height = img.naturalHeight;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0);
-          const pngDataUrl = canvas.toDataURL('image/png');
-          const pngImg = new Image();
-          pngImg.onload = () => { logoImgMap[storeName] = pngImg; onDone(); };
-          pngImg.onerror = () => onDone();
-          pngImg.src = pngDataUrl;
+          try {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            const pngDataUrl = canvas.toDataURL('image/png');
+            logoImgMap[storeName] = {
+              dataUrl: pngDataUrl,
+              width: img.naturalWidth,
+              height: img.naturalHeight
+            };
+          } catch (e) {
+            console.error('Logo conversion failed for', storeName, e);
+          }
+          onDone();
         };
         img.onerror = () => onDone();
         img.src = storeLogos[storeName];
@@ -806,9 +823,14 @@ const PersonalizedNote = () => {
                   <Chip label={validNames.length} size="small" color="primary" sx={{ ml: 1 }} />
                 )}
               </Typography>
-              <Button size="small" startIcon={<Add />} onClick={addName}>
-                Add
-              </Button>
+              <Box sx={{ display: 'flex', gap: 0.5 }}>
+                <Button size="small" startIcon={<Refresh />} onClick={() => loadFromLabels()} sx={{ fontSize: '0.75rem' }}>
+                  Load
+                </Button>
+                <Button size="small" startIcon={<Add />} onClick={addName}>
+                  Add
+                </Button>
+              </Box>
             </Box>
 
             <TextField

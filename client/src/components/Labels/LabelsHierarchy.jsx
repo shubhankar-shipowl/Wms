@@ -44,10 +44,10 @@ const CourierGroup = ({ courier, storeName, onView, onDownload, onDelete }) => (
       <Box sx={{ display: 'flex', alignItems: 'center', width: '100%' }}>
         <LocalShipping sx={{ mr: 2, color: 'text.secondary' }} />
         <Typography sx={{ flexGrow: 1 }}>{courier.courier_name}</Typography>
-        <Chip 
-          label={`${courier.products_count} products`} 
-          size="small" 
-          variant="outlined" 
+        <Chip
+          label={`${courier.products_count} products · ${courier.items_count || courier.products_count} items`}
+          size="small"
+          variant="outlined"
           sx={{ mr: 2 }}
         />
         <IconButton 

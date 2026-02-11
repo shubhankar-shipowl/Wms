@@ -53,7 +53,7 @@ router.get('/hierarchy', authenticateToken, async (req, res) => {
     
     let query = `
       SELECT id, store_name, courier_name, product_name, order_number, customer_name,
-             label_date, pdf_file_url, pdf_filename, upload_date
+             quantity, label_date, pdf_file_url, pdf_filename, upload_date
       FROM labels
       WHERE 1=1
     `;
@@ -90,18 +90,21 @@ router.get('/hierarchy', authenticateToken, async (req, res) => {
         couriersMap.set(row.courier_name, {
           courier_name: row.courier_name,
           products_count: 0,
+          items_count: 0,
           products: []
         });
         couriers.push(couriersMap.get(row.courier_name));
       }
       const courierObj = couriersMap.get(row.courier_name);
       courierObj.products_count++;
+      courierObj.items_count += (row.quantity || 1);
 
       // Product Level
       courierObj.products.push({
         id: row.id,
         product_name: row.product_name,
         order_number: row.order_number,
+        quantity: row.quantity || 1,
         date: row.label_date || row.upload_date,
         pdf_url: row.pdf_file_url,
         filename: row.pdf_filename,
@@ -124,7 +127,7 @@ router.get('/hierarchy', authenticateToken, async (req, res) => {
 router.get('/stats', authenticateToken, async (req, res) => {
   try {
     const [courierStats] = await pool.execute(`
-      SELECT courier_name, COUNT(DISTINCT label_id) as count FROM labels GROUP BY courier_name ORDER BY count DESC LIMIT 5
+      SELECT courier_name, COUNT(*) as count FROM labels GROUP BY courier_name ORDER BY count DESC LIMIT 5
     `);
 
     const [productStats] = await pool.execute(`
@@ -132,9 +135,11 @@ router.get('/stats', authenticateToken, async (req, res) => {
     `);
 
     const [totalStats] = await pool.execute(`
-      SELECT 
+      SELECT
         COUNT(DISTINCT courier_name) as total_couriers,
-        COUNT(DISTINCT label_id) as total_labels
+        COUNT(DISTINCT label_id) as total_labels,
+        COUNT(*) as total_products,
+        COALESCE(SUM(quantity), 0) as total_items
       FROM labels
     `);
 
@@ -142,7 +147,9 @@ router.get('/stats', authenticateToken, async (req, res) => {
       success: true,
       data: {
         total_couriers: totalStats[0].total_couriers,
-        total_products: totalStats[0].total_labels,
+        total_labels: totalStats[0].total_labels,
+        total_products: totalStats[0].total_products,
+        total_items: totalStats[0].total_items,
         couriers_breakdown: courierStats,
         products_breakdown: productStats
       }
@@ -227,7 +234,7 @@ router.get('/personalized-notes-data', authenticateToken, async (req, res) => {
     const { product } = req.query;
 
     let entryQuery = `
-      SELECT customer_name, store_name, MAX(upload_date) as upload_date
+      SELECT customer_name, store_name, label_id, MAX(upload_date) as upload_date
       FROM labels
       WHERE customer_name IS NOT NULL AND customer_name != ''
     `;
@@ -238,7 +245,7 @@ router.get('/personalized-notes-data', authenticateToken, async (req, res) => {
       entryParams.push(product);
     }
 
-    entryQuery += ` GROUP BY customer_name, store_name ORDER BY upload_date DESC`;
+    entryQuery += ` GROUP BY label_id, customer_name, store_name ORDER BY upload_date DESC`;
 
     const [entries] = await pool.execute(entryQuery, entryParams);
 
@@ -258,7 +265,7 @@ router.get('/personalized-notes-data', authenticateToken, async (req, res) => {
 
     res.json({
       success: true,
-      entries: entries.map(r => ({ customer_name: r.customer_name, store_name: r.store_name })),
+      entries: entries.map(r => ({ customer_name: r.customer_name, store_name: r.store_name, label_id: r.label_id })),
       stores: stores.map(r => r.store_name),
       products: products.map(r => r.product_name)
     });

@@ -44,9 +44,17 @@ const StatsDashboard = ({ stats }) => {
         <Grid item xs={12} md={4}>
           <StatCard
             title="Total Labels"
-            value={stats.total_products || 0}
+            value={stats.total_labels || 0}
             icon={<Inventory />}
             color="success"
+          />
+        </Grid>
+        <Grid item xs={12} md={4}>
+          <StatCard
+            title="Total Items"
+            value={stats.total_items || 0}
+            icon={<Store />}
+            color="primary"
           />
         </Grid>
       </Grid>
